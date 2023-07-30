@@ -190,6 +190,9 @@ This will allow us to use Emacs when a repo contains multiple lean packages."
   (when-let ((file-name (buffer-file-name))
              (root (vc-find-root (buffer-file-name)
                                  "lakefile.lean")))
+    (while (let ((parent (f-parent root)))
+             (when (string= (f-filename parent) "lake-packages")
+               (setq root (f-parent parent)))))
     (lsp-workspace-folders-add root)))
 
 ;; Automode List
