@@ -88,7 +88,10 @@ The buffer is supposed to be the *Lean Goal* buffer."
    ;; info buffer visible (on any frame)
    (get-buffer-window buffer t)
    ;; current window of current buffer is selected (i.e., in focus)
-   (eq (current-buffer) (window-buffer))))
+   (eq (current-buffer) (window-buffer))
+   ;; current buffer has a (possibly virtual) file name
+   (or (plist-get lsp--virtual-buffer :buffer-file-name)
+       (buffer-file-name))))
 
 (eval-when-compile
   (lsp-interface
