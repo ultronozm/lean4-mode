@@ -30,11 +30,12 @@
 
 ;;; Code:
 
+(require 'cl-lib)
 (require 'dash)
 (require 'lean4-syntax)
 (require 'lean4-settings)
-(require 'lsp-mode)
-(require 'lsp-protocol)
+(require 'lean4-util)
+(require 'eglot)
 (require 'magit-section)
 
 (defgroup lean4-info nil
@@ -45,24 +46,20 @@
 ;; Automode List
 ;;;###autoload
 (define-derived-mode lean4-info-mode prog-mode "Lean-Info"
-  "Major mode for Lean Info Buffer."
+  "Helper mode for Lean 4 info buffer.
+This mode is only used in temporary buffers, for fontification."
   :syntax-table lean4-syntax-table
   :group 'lean
-  (set (make-local-variable 'font-lock-defaults) lean4-info-font-lock-defaults)
-  (set (make-local-variable 'indent-tabs-mode) nil)
-  (set 'compilation-mode-font-lock-keywords '())
-  (set (make-local-variable 'lisp-indent-function)
-       'common-lisp-indent-function))
+  (set (make-local-variable 'font-lock-defaults) lean4-info-font-lock-defaults))
 
 (defmacro lean4-with-info-output-to-buffer (buffer &rest body)
   "Execute BODY redirecting `print' output to BUFFER."
   `(let ((buf (get-buffer ,buffer)))
      (with-current-buffer buf
-       (setq buffer-read-only nil)
-       (erase-buffer)
-       (let ((standard-output buf))
-         ,@body)
-       (setq buffer-read-only t))))
+       (let ((inhibit-read-only t)
+             (standard-output buf))
+         (erase-buffer)
+         ,@body))))
 
 (defun lean4-ensure-info-buffer (buffer)
   "Create BUFFER if it does not exist.
@@ -89,25 +86,36 @@ The buffer is supposed to be the *Lean Goal* buffer."
    (get-buffer-window buffer t)
    ;; current window of current buffer is selected (i.e., in focus)
    (eq (current-buffer) (window-buffer))
-   ;; current buffer has a (possibly virtual) file name
-   (or (plist-get lsp--virtual-buffer :buffer-file-name)
-       (buffer-file-name))))
-
-(eval-when-compile
-  (lsp-interface
-    (lean:PlainGoal (:goals) nil)
-    (lean:PlainTermGoal (:goal) nil)
-    (lean:Diagnostic (:range :fullRange :message) (:code :relatedInformation :severity :source :tags))))
+   ;; current buffer is visiting a file
+   buffer-file-name))
 
 (defconst lean4-info-buffer-name "*Lean Goal*")
 
-(defvar lean4-goals nil)
-(defvar lean4-term-goal nil)
+(defvar lean4-info--goals nil)
+(defvar lean4-info--term-goal nil)
 
-(lsp-defun lean4-diagnostic-full-start-line ((&lean:Diagnostic :full-range (&Range :start (&Position :line))))
-  line)
-(lsp-defun lean4-diagnostic-full-end-line ((&lean:Diagnostic :full-range (&Range :end (&Position :line))))
-  line)
+(defun lean4-info--diagnostics ()
+  (nreverse
+   (cl-loop for diag in (flymake-diagnostics)
+            when (cdr (assoc 'eglot-lsp-diag (eglot--diag-data diag)))
+            collect it)))
+
+(defun lean4-info--diagnostic-start (diagnostic)
+  (eglot--dbind ((Range) start) (cl-getf diagnostic :fullRange)
+    (eglot--dbind ((Position) line) start
+      line)))
+
+(defun lean4-info--diagnostic-end (diagnostic)
+  (eglot--dbind ((Range) end) (cl-getf diagnostic :fullRange)
+    (eglot--dbind ((Position) line) end
+      line)))
+
+(defun lean4-info--fontify-string (s)
+  (with-temp-buffer
+    (lean4-info-mode)
+    (insert s)
+    (font-lock-ensure)
+    (buffer-string)))
 
 (defun lean4-mk-message-section (caption errors)
   "Add a section with caption CAPTION and contents ERRORS."
@@ -116,48 +124,51 @@ The buffer is supposed to be the *Lean Goal* buffer."
       (magit-insert-heading caption)
       (magit-insert-section-body
         (dolist (e errors)
-          (-let (((&Diagnostic :message :range (&Range :start (&Position :line :character))) e))
-            (magit-insert-section (magit-section)
-              (magit-insert-heading (format "%d:%d: " (1+ (lsp-translate-line line)) (lsp-translate-column character)))
-              (magit-insert-section-body
-                (insert message "\n")))))))))
+          (eglot--dbind ((Diagnostic) message range) e
+            (eglot--dbind ((Range) start) range
+              (eglot--dbind ((Position) line character) start
+                (magit-insert-section (magit-section)
+                  (magit-insert-heading (format "%d:%d" (1+ line) character))
+                  (magit-insert-section-body
+                    (insert message "\n")))))))))))
 
 (defun lean4-info-buffer-redisplay ()
-  (when (lean4-info-buffer-active lean4-info-buffer-name)
-    (-let* ((deactivate-mark) ; keep transient mark
-            (line (lsp--cur-line))
-            (errors (lsp--get-buffer-diagnostics))
-            (errors (-sort (-on #'< #'lean4-diagnostic-full-end-line) errors))
-            ((errors-above errors)
-             (--split-with (< (lean4-diagnostic-full-end-line it) line) errors))
-            ((errors-here errors-below)
-             (--split-with (<= (lean4-diagnostic-full-start-line it) line) errors)))
-      (lean4-with-info-output-to-buffer
-       lean4-info-buffer-name
-       (when lean4-goals
-         (magit-insert-section (magit-section)
-           (magit-insert-heading "Goals:")
-           (magit-insert-section-body
-             (if (> (length lean4-goals) 0)
-                 (seq-doseq (g lean4-goals)
-                   (magit-insert-section (magit-section)
-                     (insert (lsp--fontlock-with-mode g 'lean4-info-mode) "\n\n")))
-               (insert "goals accomplished\n\n")))))
-       (when lean4-term-goal
-         (magit-insert-section (magit-section)
-           (magit-insert-heading "Expected type:")
-           (magit-insert-section-body
-             (insert (lsp--fontlock-with-mode lean4-term-goal 'lean4-info-mode) "\n"))))
-       (lean4-mk-message-section "Messages here:" errors-here)
-       (lean4-mk-message-section "Messages below:" errors-below)
-       (lean4-mk-message-section "Messages above:" errors-above)
-       (when lean4-highlight-inaccessible-names
-         (goto-char 0)
-         (while (re-search-forward "\\(\\sw+\\)✝\\([¹²³⁴-⁹⁰]*\\)" nil t)
-           (replace-match
-            (propertize (s-concat (match-string-no-properties 1) (match-string-no-properties 2))
-                        'font-lock-face 'font-lock-comment-face)
-            'fixedcase 'literal)))))))
+  (let ((inhibit-message t))
+    (when (lean4-info-buffer-active lean4-info-buffer-name)
+      (-let* ((deactivate-mark)         ; keep transient mark
+              (line (save-restriction (widen) (1- (line-number-at-pos nil t))))
+              (errors (lean4-info--diagnostics))
+              (errors (-sort (-on #'< #'lean4-info--diagnostic-end) errors))
+              ((errors-above errors)
+               (--split-with (< (lean4-info--diagnostic-end it) line) errors))
+              ((errors-here errors-below)
+               (--split-with (<= (lean4-info--diagnostic-start it) line) errors)))
+        (lean4-with-info-output-to-buffer
+         lean4-info-buffer-name
+         (when lean4-info--goals
+           (magit-insert-section (magit-section)
+             (magit-insert-heading "Goals:")
+             (magit-insert-section-body
+               (if (> (length lean4-info--goals) 0)
+                   (seq-doseq (g lean4-info--goals)
+                     (magit-insert-section (magit-section)
+                       (insert (lean4-info--fontify-string g) "\n\n")))
+                 (insert "goals accomplished\n\n")))))
+         (when lean4-info--term-goal
+           (magit-insert-section (magit-section)
+             (magit-insert-heading "Expected type:")
+             (magit-insert-section-body
+               (insert (lean4-info--fontify-string lean4-info--term-goal) "\n\n"))))
+         (lean4-mk-message-section "Messages here:" errors-here)
+         (lean4-mk-message-section "Messages below:" errors-below)
+         (lean4-mk-message-section "Messages above:" errors-above)
+         (when lean4-highlight-inaccessible-names
+           (goto-char 0)
+           (while (re-search-forward "\\(\\sw+\\)✝\\([¹²³⁴-⁹⁰]*\\)" nil t)
+             (replace-match
+              (propertize (s-concat (match-string-no-properties 1) (match-string-no-properties 2))
+                          'font-lock-face 'font-lock-comment-face)
+              'fixedcase 'literal))))))))
 
 
 ;; Debouncing
@@ -271,31 +282,22 @@ prevent lag, because magit is quite slow at building sections."
 	     (setq lean4-info-buffer-debounce-begin-time nil)
 	     (lean4-info-buffer-redisplay))))))
 
-
 (defun lean4-info-buffer-refresh ()
   "Refresh the *Lean Goal* buffer."
-  (when (lean4-info-buffer-active lean4-info-buffer-name)
-    (lsp-request-async
-     "$/lean/plainGoal"
-     (lsp--text-document-position-params)
-     (-lambda ((ignored &as &lean:PlainGoal? :goals))
-       (setq lean4-goals goals)
-       (lean4-info-buffer-redisplay-debounced))
-     :error-handler #'ignore
-     :mode 'tick
-     :cancel-token :plain-goal)
-    (lsp-request-async
-     "$/lean/plainTermGoal"
-     (lsp--text-document-position-params)
-     (-lambda ((ignored &as &lean:PlainTermGoal? :goal))
-       (setq lean4-term-goal goal)
-       (lean4-info-buffer-redisplay-debounced))
-     :error-handler #'ignore
-     :mode 'tick
-     :cancel-token :plain-term-goal)
-    ;; may lead to flickering
-    ;(lean4-info-buffer-redisplay)
-    ))
+  (let ((inhibit-message t)
+        (server (eglot-current-server)))
+      (when (and server (lean4-info-buffer-active lean4-info-buffer-name))
+        (eglot--signal-textDocument/didChange)
+        (jsonrpc-async-request
+         server :$/lean/plainGoal (eglot--TextDocumentPositionParams)
+         :success-fn (lambda (result)
+                       (setq lean4-info--goals (cl-getf result :goals))
+                       (lean4-info-buffer-redisplay-debounced)))
+        (jsonrpc-async-request
+         server :$/lean/plainTermGoal (eglot--TextDocumentPositionParams)
+         :success-fn (lambda (result)
+                       (setq lean4-info--term-goal (cl-getf result :goal))
+                       (lean4-info-buffer-redisplay-debounced))))))
 
 (defun lean4-toggle-info ()
   "Show infos at the current point."

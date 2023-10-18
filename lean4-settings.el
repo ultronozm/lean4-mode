@@ -114,6 +114,18 @@ outside a project will default to that mode."
   :group 'lean
   :type 'boolean)
 
+(defcustom lean4-idle-delay 0.3
+  "Interval for `lean4-idle-hook` functions."
+  :type 'number
+  :group 'lean4-mode)
+
+(defcustom lean4-enable-file-watchers nil
+  "Honour requests from the server to watch for file modifications.
+This is disabled by default because the server wants to watch \"**/*.ilean\",
+and in many cases there are too many directories to watch each individually."
+  :group 'lean4
+  :type 'boolean)
+
 (defcustom lean4-keybinding-std-exe1 (kbd "C-c C-x")
   "Main Keybinding for `lean4-std-exe'."
   :group 'lean4-keybinding :type 'key-sequence)
@@ -125,9 +137,6 @@ outside a project will default to that mode."
   :group 'lean4-keybinding  :type 'key-sequence)
 (defcustom lean4-keybinding-server-restart (kbd "C-c C-r")
   "Lean Keybinding for server-restart."
-  :group 'lean4-keybinding  :type 'key-sequence)
-(defcustom lean4-keybinding-tab-indent (kbd "TAB")
-  "Lean Keybinding for `lean4-tab-indent'."
   :group 'lean4-keybinding  :type 'key-sequence)
 (defcustom lean4-keybinding-auto-complete (kbd "S-SPC")
   "Lean Keybinding for auto completion."

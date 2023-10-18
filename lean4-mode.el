@@ -10,7 +10,7 @@
 ;; Maintainer: Sebastian Ullrich <sebasti@nullri.ch>
 ;; Created: Jan 09, 2014
 ;; Keywords: languages
-;; Package-Requires: ((emacs "27.1") (dash "2.18.0") (s "1.10.0") (f "0.19.0") (flycheck "30") (magit-section "2.90.1") (lsp-mode "8.0.0"))
+;; Package-Requires: ((emacs "27.1") (dash "2.18.0") (s "1.10.0") (f "0.19.0") (flycheck "30") (magit-section "2.90.1") (eglot "1.15") (markdown-mode "2.6"))
 ;; URL: https://github.com/leanprover/lean4-mode
 ;; SPDX-License-Identifier: Apache-2.0
 
@@ -44,7 +44,8 @@
 (require 'dash)
 (require 'pcase)
 (require 'flycheck)
-(require 'lsp-mode)
+(require 'markdown-mode)
+(require 'eglot)
 (require 'lean4-eri)
 (require 'lean4-util)
 (require 'lean4-settings)
@@ -109,30 +110,27 @@ FILE-NAME."
 This function restarts the server subprocess for the current
 file, recompiling, and reloading all imports."
   (interactive)
-  (lsp-notify
-   "textDocument/didClose"
-   `(:textDocument ,(lsp--text-document-identifier)))
-  (lsp-notify
-   "textDocument/didOpen"
-   (list :textDocument
-         (list :uri (lsp--buffer-uri)
-               :languageId (lsp-buffer-language)
-               :version lsp--cur-version
-               :text (lsp--buffer-content)))))
+  (when eglot--managed-mode
+    (eglot--managed-mode -1)
+    (eglot--managed-mode)))
 
-(defun lean4-tab-indent ()
-  "Lean 4 function for TAB indent."
-  (interactive)
-  (cond ((looking-back (rx line-start (* white)) nil)
-         (lean4-eri-indent))
-        (t (indent-for-tab-command))))
+(defun lean4-indent-line ()
+  "Lean 4 indent line function.
+If point is at the end of the current indentation, use `lean4-eri-indent`;
+or if point is before that position, move it there; or do nothing, to allow
+tab completion (if configured)."
+  (let ((cur-column (current-column))
+        (cur-indent (current-indentation)))
+    (cond ((= cur-column cur-indent)
+           (lean4-eri-indent))
+          ((< cur-column cur-indent)
+           (move-to-column cur-indent)))))
 
 (defun lean4-set-keys ()
   "Setup Lean 4 keybindings."
   (local-set-key lean4-keybinding-std-exe1                  #'lean4-std-exe)
   (local-set-key lean4-keybinding-std-exe2                  #'lean4-std-exe)
   (local-set-key lean4-keybinding-show-key                  #'quail-show-key)
-  (local-set-key lean4-keybinding-tab-indent                #'lean4-tab-indent)
   ;; (local-set-key lean4-keybinding-hole                      #'lean4-hole)
   (local-set-key lean4-keybinding-lean4-toggle-info         #'lean4-toggle-info)
   ;; (local-set-key lean4-keybinding-lean4-message-boxes-toggle #'lean4-message-boxes-toggle)
@@ -155,8 +153,29 @@ file, recompiling, and reloading all imports."
     ["Execute lean"         lean4-execute                      t]
     ["Toggle info display"  lean4-toggle-info                  t]
     ["List of errors"       flycheck-list-errors               flycheck-mode]
-    ["Restart lean process" lsp-workspace-restart              t]
+    ["Restart lean process" eglot-reconnect                    t]
     ["Customize lean4-mode" (customize-group 'lean)            t]))
+
+(defvar lean4-idle-hook nil
+  "Functions to run after Emacs has been idle for `lean4-idle-delay` seconds.
+The functions are run only once for each time Emacs becomes idle.")
+
+(defvar lean4--idle-timer nil)
+
+(defun lean4--idle-function ()
+  (run-hooks 'lean4-idle-hook))
+
+(defun lean4--start-idle-timer ()
+  (unless lean4--idle-timer
+    (setq lean4--idle-timer
+          (run-with-idle-timer lean4-idle-delay t #'lean4--idle-function))))
+
+(defun lean4--cancel-idle-timer ()
+  (when lean4--idle-timer
+    (cancel-timer lean4--idle-timer)
+    (setq lean4--idle-timer nil)))
+
+(lean4--start-idle-timer)
 
 (defconst lean4-hooks-alist
   '(
@@ -166,34 +185,32 @@ file, recompiling, and reloading all imports."
     ;; update errors immediately, but delay querying goal
     (flycheck-after-syntax-check-hook . lean4-info-buffer-redisplay-debounced)
     (post-command-hook . lean4-info-buffer-redisplay-debounced)
-    (lsp-on-idle-hook . lean4-info-buffer-refresh))
+    (eglot-managed-mode-hook . lean4-info-buffer-redisplay-debounced)
+    (lean4-idle-hook . lean4-info-buffer-refresh))
   "Hooks which lean4-mode needs to hook in.
 
 The `car' of each pair is a hook variable, the `cdr' a function
 to be added or removed from the hook variable if Flycheck mode is
 enabled and disabled respectively.")
 
-(defun lean4-mode-setup ()
-  "Default lean4-mode setup."
-  ;; Right click menu sources
-  ;;(setq lean4-right-click-item-functions '(lean4-info-right-click-find-definition
-  ;;                                        lean4-hole-right-click))
-  ;; Flycheck
-  (setq-local flycheck-disabled-checkers '())
-  ;; Lean massively benefits from semantic tokens, so change default to enabled
-  (setq-local lsp-semantic-tokens-enable t)
-  (lean4-create-lsp-workspace))
-
-(defun lean4-create-lsp-workspace ()
-  "Create an LSP workspace.
+(cl-defmethod project-root ((project (head lake)))
+  "A pair ('lake . DIR) is a Lean 4 project whose root directory is DIR.
 This will allow us to use Emacs when a repo contains multiple lean packages."
-  (when-let ((file-name (buffer-file-name))
-             (root (vc-find-root (buffer-file-name)
-                                 "lakefile.lean")))
-    (while (let ((parent (f-parent root)))
-             (when (string= (f-filename parent) "lake-packages")
-               (setq root (f-parent parent)))))
-    (lsp-workspace-folders-add root)))
+  (cdr project))
+
+(defun lean4-project-find (file-name)
+  "Find the root directory for a Lean 4 project by searching for lakefiles."
+  (when (bound-and-true-p eglot-lsp-context)
+    (let (root)
+      (while-let ((dir (locate-dominating-file file-name "lakefile.lean")))
+        ;; We found a lakefile, but maybe it belongs to a package.
+        ;; Continue looking until there are no more lakefiles.
+        (setq root dir
+              file-name (file-name-directory (directory-file-name dir))))
+      (when root
+	(cons 'lake root)))))
+
+(push #'lean4-project-find project-find-functions)
 
 ;; Automode List
 ;;;###autoload
@@ -215,15 +232,14 @@ Invokes `lean4-mode-hook'."
   (set 'compilation-mode-font-lock-keywords '())
   (require 'lean4-input)
   (set-input-method "Lean")
-  (set (make-local-variable 'lisp-indent-function)
-       'common-lisp-indent-function)
+  (setq-local indent-line-function 'lean4-indent-line)
   (lean4-set-keys)
   (if (fboundp 'electric-indent-local-mode)
       (electric-indent-local-mode -1))
   ;; (abbrev-mode 1)
   (pcase-dolist (`(,hook . ,fn) lean4-hooks-alist)
     (add-hook hook fn nil 'local))
-  (lean4-mode-setup))
+  (eglot-ensure))
 
 (defun lean4--version ()
   "Return Lean version as a list `(MAJOR MINOR PATCH)'."
@@ -248,7 +264,7 @@ Invokes `lean4-mode-hook'."
 
 ;; Automatically use lean4-mode for .lean files.
 ;;;###autoload
-(push '("\\.lean$" . lean4-select-mode) auto-mode-alist)
+(push '("\\.lean\\'" . lean4-select-mode) auto-mode-alist)
 
 ;;;###autoload
 (with-eval-after-load 'markdown-mode
@@ -257,11 +273,6 @@ Invokes `lean4-mode-hook'."
 ;; Use utf-8 encoding
 ;;;### autoload
 (modify-coding-system-alist 'file "\\.lean\\'" 'utf-8)
-
-;; LSP init
-;; Ref: https://emacs-lsp.github.io/lsp-mode/page/adding-new-language/
-(add-to-list 'lsp-language-id-configuration
-             '(lean4-mode . "lean"))
 
 (defun lean4--server-cmd ()
   "Return Lean server command.
@@ -273,14 +284,42 @@ otherwise return '/path/to/lean --server'."
         `(,(lean4-get-executable "lake") "serve"))
     (error `(,(lean4-get-executable lean4-executable-name) "--server"))))
 
-(lsp-register-client
- (make-lsp-client :new-connection (lsp-stdio-connection #'lean4--server-cmd)
-                  :major-modes '(lean4-mode)
-                  :server-id 'lean4-lsp
-                  :notification-handlers (ht ("$/lean/fileProgress" #'lean4-fringe-update))
-                  :semantic-tokens-faces-overrides '(:types (("leanSorryLike" . font-lock-warning-face)))))
+;; Eglot init
+(defun lean4--server-class-init (&optional _interactive)
+  (cons 'lean4-eglot-lsp-server (lean4--server-cmd)))
 
-(add-hook 'lean4-mode-hook #'lsp)
+(push (cons 'lean4-mode #'lean4--server-class-init) eglot-server-programs)
+
+
+(defclass lean4-eglot-lsp-server (eglot-lsp-server) nil
+  :documentation "Eglot LSP server subclass for the Lean 4 server.")
+
+(cl-defmethod eglot-handle-notification ((server lean4-eglot-lsp-server)
+                                         (_method (eql $/lean/fileProgress))
+                                         &key textDocument processing)
+  "Handle notification $/lean/fileProgress."
+  (eglot--dbind ((VersionedTextDocumentIdentifier) uri) textDocument
+    (lean4-fringe-update server processing uri)))
+
+(cl-defmethod eglot-handle-notification :after ((_server lean4-eglot-lsp-server)
+                                                (_method (eql textDocument/publishDiagnostics))
+                                                &key &allow-other-keys)
+  "Handle notification textDocument/publishDiagnostics."
+  (lean4-info-buffer-redisplay-debounced))
+
+(cl-defmethod eglot-register-capability ((_server lean4-eglot-lsp-server)
+                                         (_method (eql workspace/didChangeWatchedFiles))
+                                         _id &key _watchers)
+  "Handle dynamic registration of workspace/didChangeWatchedFiles."
+  (when lean4-enable-file-watchers
+    (cl-call-next-method)))
+
+(cl-defmethod eglot-unregister-capability ((_server lean4-eglot-lsp-server)
+                                           (_method (eql workspace/didChangeWatchedFiles))
+                                           _id)
+  "Handle dynamic unregistration of workspace/didChangeWatchedFiles."
+  (when lean4-enable-file-watchers
+    (cl-call-next-method)))
 
 (provide 'lean4-mode)
 ;;; lean4-mode.el ends here

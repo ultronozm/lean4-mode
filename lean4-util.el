@@ -134,5 +134,17 @@ Optionally filter files satisfying predicate FN and/or use RECURSIVE search."
   (let ((files (-select 'f-file? (lean4--collect-entries path recursive))))
     (if fn (-select fn files) files)))
 
+(defmacro lean4-with-uri-buffers (server uri &rest body)
+  (declare (indent 2))
+  `(dolist (buf (eglot--managed-buffers ,server))
+     (when (buffer-live-p buf)
+       (with-current-buffer buf
+         (when (and buffer-file-name
+                    (string= buffer-file-truename
+                             (abbreviate-file-name
+                              (file-truename
+                               (eglot-uri-to-path ,uri)))))
+           ,@body)))))
+
 (provide 'lean4-util)
 ;;; lean4-util.el ends here
