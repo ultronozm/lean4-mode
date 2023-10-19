@@ -321,30 +321,32 @@ otherwise return '/path/to/lean --server'."
   (when lean4-enable-file-watchers
     (cl-call-next-method)))
 
-(defun lean4-mode--before--eglot-read-execute-code-action (actions &rest args)
+(defun lean4-mode--before--eglot-read-execute-code-action (args)
   "Before advice for eglot--read-execute-code-action for the Lean 4 server.
 Set the text document version to nil, to tell Eglot not to check the version.
 Append the new text to the title, so the user knows what each item is."
   ;; See https://debbugs.gnu.org/cgi/bugreport.cgi?bug=66552
-  `(,(if (eq (type-of (eglot-current-server)) 'lean4-eglot-lsp-server)
-         (mapcar
-          (lambda (action)
-            (eglot--dbind ((CodeAction) edit) action
-              (eglot--dbind ((WorkspaceEdit) documentChanges) edit
-                ;; Set each document version to nil if it is zero
-                (mapc (eglot--lambda ((TextDocumentEdit) textDocument)
-                        (when (eq (cl-getf textDocument :version) 0)
-                          (setf (cl-getf textDocument :version) nil)))
-                      documentChanges)
-                ;; Append the newText to the title
-                (let* ((title (cl-getf action :title))
-                       (change0 (aref documentChanges 0))
-                       (edit0 (aref (cl-getf change0 :edits) 0))
-                       (newText (cl-getf edit0 :newText)))
-                  (setf (cl-getf action :title) (concat title ": " newText))))))
-          actions)
-       actions)
-    ,@args))
+  (if (eq (type-of (eglot-current-server)) 'lean4-eglot-lsp-server)
+      (cons
+       (mapcar
+        (lambda (action)
+          (eglot--dbind ((CodeAction) edit) action
+            (eglot--dbind ((WorkspaceEdit) documentChanges) edit
+              ;; Set each document version to nil if it is zero
+              (mapc (eglot--lambda ((TextDocumentEdit) textDocument)
+                      (when (eq (cl-getf textDocument :version) 0)
+                        (setf (cl-getf textDocument :version) nil)))
+                     documentChanges)
+              ;; Append the newText to the title
+              (let* ((title (cl-getf action :title))
+                     (change0 (aref documentChanges 0))
+                     (edit0 (aref (cl-getf change0 :edits) 0))
+                      (newText (cl-getf edit0 :newText)))
+                (setf (cl-getf action :title) (concat title ": " newText)))))
+          action)
+        (car args))
+       (cdr args))
+    args))
 
 (advice-add 'eglot--read-execute-code-action :filter-args
             #'lean4-mode--before--eglot-read-execute-code-action)
