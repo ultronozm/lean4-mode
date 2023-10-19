@@ -185,7 +185,7 @@ The functions are run only once for each time Emacs becomes idle.")
     ;; update errors immediately, but delay querying goal
     (flycheck-after-syntax-check-hook . lean4-info-buffer-redisplay-debounced)
     (post-command-hook . lean4-info-buffer-redisplay-debounced)
-    (eglot-managed-mode-hook . lean4-info-buffer-redisplay-debounced)
+    (eglot--managed-mode-hook . lean4-info-buffer-redisplay-debounced)
     (lean4-idle-hook . lean4-info-buffer-refresh))
   "Hooks which lean4-mode needs to hook in.
 

@@ -75,7 +75,7 @@
       (delete-overlay ov)))
   (when lean4-show-file-progress
     (seq-doseq (item lean4-fringe-data)
-      (let* ((reg (eglot-range-region (cl-getf item :range)))
+      (let* ((reg (eglot--range-region (cl-getf item :range)))
              (ov (make-overlay (car reg) (cdr reg))))
         (overlay-put ov 'face 'lean4-fringe-face)
         (overlay-put ov 'line-prefix
