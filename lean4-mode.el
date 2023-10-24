@@ -321,35 +321,52 @@ otherwise return '/path/to/lean --server'."
   (when lean4-enable-file-watchers
     (cl-call-next-method)))
 
+;; Workarounds for code actions, see
+;;   https://debbugs.gnu.org/cgi/bugreport.cgi?bug=66552
+;;   https://github.com/leanprover/lean4/pull/2721
 (defun lean4-mode--before--eglot-read-execute-code-action (args)
   "Before advice for eglot--read-execute-code-action for the Lean 4 server.
-Set the text document version to nil, to tell Eglot not to check the version.
-Append the new text to the title, so the user knows what each item is."
-  ;; See https://debbugs.gnu.org/cgi/bugreport.cgi?bug=66552
-  (if (eq (type-of (eglot-current-server)) 'lean4-eglot-lsp-server)
-      (cons
-       (mapcar
-        (lambda (action)
-          (eglot--dbind ((CodeAction) edit) action
-            (eglot--dbind ((WorkspaceEdit) documentChanges) edit
-              ;; Set each document version to nil if it is zero
-              (mapc (eglot--lambda ((TextDocumentEdit) textDocument)
-                      (when (eq (cl-getf textDocument :version) 0)
-                        (setf (cl-getf textDocument :version) nil)))
-                     documentChanges)
-              ;; Append the newText to the title
-              (let* ((title (cl-getf action :title))
-                     (change0 (aref documentChanges 0))
-                     (edit0 (aref (cl-getf change0 :edits) 0))
-                      (newText (cl-getf edit0 :newText)))
-                (setf (cl-getf action :title) (concat title ": " newText)))))
-          action)
-        (car args))
-       (cdr args))
-    args))
+For \"Try this\" quickfixes, append the new text to the title, so the user knows
+which item is which."
+  (when (eq (type-of (eglot-current-server)) 'lean4-eglot-lsp-server)
+    (dolist (action (car args))
+      (eglot--dbind ((CodeAction) edit) action
+        (when edit
+          (eglot--dbind ((WorkspaceEdit) documentChanges) edit
+            ;; Eglot cannot handle duplicate titles in a list of code actions
+            ;; because the title is used as a key in the alist passed to
+            ;; `completing-read'. To disambiguate (and incidentally, let the
+            ;; user know which action is which), append the newText to the
+            ;; title. Do this only if the original title is "Apply 'Try this'".
+            ;; Currently only the "Try this" quickfixes from Mathlib library
+            ;; search tactics (exact?, apply?, rw?) are sent as a list of code
+            ;; actions with identical titles.
+            (let* ((title (cl-getf action :title))
+                   (change0 (aref documentChanges 0))
+                   (edit0 (aref (cl-getf change0 :edits) 0))
+                   (newText (cl-getf edit0 :newText)))
+              (when (string= title "Apply 'Try this'")
+                (setf (cl-getf action :title)
+                      (concat title ": " newText)))))))))
+    args)
 
 (advice-add 'eglot--read-execute-code-action :filter-args
             #'lean4-mode--before--eglot-read-execute-code-action)
+
+(cl-defmethod eglot-execute :before ((_server lean4-eglot-lsp-server) action)
+  "Massage a `CodeAction` before Eglot handles it.
+If ACTION is a fully resolved `CodeAction' (that is, if it contains edits)
+and if any text document version number is zero, set it to nil to tell
+Eglot not to validate the version."
+  (eglot--dcase action
+    (((CodeAction) edit)
+     (when edit
+       (eglot--dbind ((WorkspaceEdit) documentChanges) edit
+         ;; Set each document version to nil if it is zero
+         (mapc (eglot--lambda ((TextDocumentEdit) textDocument)
+                 (when (eq (cl-getf textDocument :version) 0)
+                   (setf (cl-getf textDocument :version) nil)))
+               documentChanges))))))
 
 (provide 'lean4-mode)
 ;;; lean4-mode.el ends here
