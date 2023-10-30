@@ -286,18 +286,18 @@ prevent lag, because magit is quite slow at building sections."
   "Refresh the *Lean Goal* buffer."
   (let ((inhibit-message t)
         (server (eglot-current-server)))
-      (when (and server (lean4-info-buffer-active lean4-info-buffer-name))
-        (eglot--signal-textDocument/didChange)
-        (jsonrpc-async-request
-         server :$/lean/plainGoal (eglot--TextDocumentPositionParams)
-         :success-fn (lambda (result)
-                       (setq lean4-info--goals (cl-getf result :goals))
-                       (lean4-info-buffer-redisplay-debounced)))
-        (jsonrpc-async-request
-         server :$/lean/plainTermGoal (eglot--TextDocumentPositionParams)
-         :success-fn (lambda (result)
-                       (setq lean4-info--term-goal (cl-getf result :goal))
-                       (lean4-info-buffer-redisplay-debounced))))))
+    (when (and server (lean4-info-buffer-active lean4-info-buffer-name))
+      (eglot--signal-textDocument/didChange)
+      (jsonrpc-async-request
+       server :$/lean/plainGoal (eglot--TextDocumentPositionParams)
+       :success-fn (lambda (result)
+                     (setq lean4-info--goals (cl-getf result :goals))
+                     (lean4-info-buffer-redisplay-debounced)))
+      (jsonrpc-async-request
+       server :$/lean/plainTermGoal (eglot--TextDocumentPositionParams)
+       :success-fn (lambda (result)
+                     (setq lean4-info--term-goal (cl-getf result :goal))
+                     (lean4-info-buffer-redisplay-debounced))))))
 
 (defun lean4-toggle-info ()
   "Show infos at the current point."

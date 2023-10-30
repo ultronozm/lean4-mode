@@ -120,7 +120,7 @@ file, recompiling, and reloading all imports."
 
 (defun lean4-indent-line ()
   "Lean 4 indent line function.
-If point is at the end of the current indentation, use `lean4-eri-indent`;
+If point is at the end of the current indentation, use `lean4-eri-indent';
 or if point is before that position, move it there; or do nothing, to allow
 tab completion (if configured)."
   (let ((cur-column (current-column))
@@ -161,7 +161,7 @@ tab completion (if configured)."
     ["Customize lean4-mode" (customize-group 'lean)            t]))
 
 (defvar lean4-idle-hook nil
-  "Functions to run after Emacs has been idle for `lean4-idle-delay` seconds.
+  "Functions to run after Emacs has been idle for `lean4-idle-delay' seconds.
 The functions are run only once for each time Emacs becomes idle.")
 
 (defvar lean4--idle-timer nil)
@@ -216,7 +216,6 @@ This will allow us to use Emacs when a repo contains multiple lean packages."
 
 (push #'lean4-project-find project-find-functions)
 
-;; Automode List
 ;;;###autoload
 (define-derived-mode lean4-mode prog-mode "Lean 4"
   "Major mode for Lean.
@@ -366,7 +365,7 @@ which item is which."
             #'lean4-mode--before--eglot-read-execute-code-action)
 
 (cl-defmethod eglot-execute :before ((_server lean4-eglot-lsp-server) action)
-  "Massage a `CodeAction` before Eglot handles it.
+  "Massage a `CodeAction' before Eglot handles it.
 If ACTION is a fully resolved `CodeAction' (that is, if it contains edits)
 and if any text document version number is zero, set it to nil to tell
 Eglot not to validate the version."
