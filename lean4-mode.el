@@ -59,6 +59,10 @@
 (defvar lsp--cur-version)
 (defvar markdown-code-lang-modes)
 (defvar compilation-mode-font-lock-keywords)
+(defvar flymake-no-changes-timeout)
+(defvar flymake-start-on-flymake-mode nil)
+(defvar flymake-start-on-save-buffer nil)
+
 (declare-function lean-mode "ext:lean-mode")
 (declare-function flymake-proc-init-create-temp-buffer-copy "flymake-proc")
 (declare-function quail-show-key "quail")
@@ -233,6 +237,12 @@ Invokes `lean4-mode-hook'."
   (require 'lean4-input)
   (set-input-method "Lean")
   (setq-local indent-line-function 'lean4-indent-line)
+  ;; Inhibit flymake from starting automatically. Since diagnostics
+  ;; are updated only by the language server, we call `flymake-start'
+  ;; on their receipt.
+  (setq-local flymake-no-changes-timeout nil)
+  (setq-local flymake-start-on-flymake-mode nil)
+  (setq-local flymake-start-on-save-buffer nil)
   (lean4-set-keys)
   (if (fboundp 'electric-indent-local-mode)
       (electric-indent-local-mode -1))
@@ -301,11 +311,13 @@ otherwise return '/path/to/lean --server'."
   (eglot--dbind ((VersionedTextDocumentIdentifier) uri) textDocument
     (lean4-fringe-update server processing uri)))
 
-(cl-defmethod eglot-handle-notification :after ((_server lean4-eglot-lsp-server)
+(cl-defmethod eglot-handle-notification :after ((server lean4-eglot-lsp-server)
                                                 (_method (eql textDocument/publishDiagnostics))
-                                                &key &allow-other-keys)
+                                                &key uri &allow-other-keys)
   "Handle notification textDocument/publishDiagnostics."
-  (lean4-info-buffer-redisplay-debounced))
+  (lean4-with-uri-buffers server uri
+    (lean4-info-buffer-redisplay-debounced)
+    (flymake-start)))
 
 (cl-defmethod eglot-register-capability ((_server lean4-eglot-lsp-server)
                                          (_method (eql workspace/didChangeWatchedFiles))
