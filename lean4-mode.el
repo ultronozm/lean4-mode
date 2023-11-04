@@ -203,17 +203,67 @@ enabled and disabled respectively.")
 This will allow us to use Emacs when a repo contains multiple lean packages."
   (cdr project))
 
+(defcustom lean4-workspace-exclusions nil
+  "A set of directories in which not to start a Lean 4 language server."
+  :group 'lean4
+  :type '(repeat directory))
+
+(defcustom lean4-workspace-roots nil
+  "A set of directories in which to start a Lean 4 language server."
+  :group 'lean4
+  :type '(repeat directory))
+
+(defvar lean4--workspace-message-enabled nil)
+
 (defun lean4-project-find (file-name)
-  "Find the root directory for a Lean 4 project by searching for lakefiles."
-  (when (bound-and-true-p eglot-lsp-context)
-    (let (root)
-      (while-let ((dir (locate-dominating-file file-name "lakefile.lean")))
-        ;; We found a lakefile, but maybe it belongs to a package.
-        ;; Continue looking until there are no more lakefiles.
-        (setq root dir
-              file-name (file-name-directory (directory-file-name dir))))
-      (when root
-	(cons 'lake root)))))
+  "Find the workspace root directory for a Lean 4 file.
+Files under the same root directory use the same instance of
+the Lean 4 language server.
+
+Look up the directory hierarchy starting from FILE-NAME for the
+first member of `lean4-workspace-roots' or
+`lean4-workspace-exclusions'. If no such directory is found,
+search again and use the *last* directory containing a file
+\"lakefile.lean\". If the second search fails, or if the search
+encounters a member of `lean4-workspace-exclusions', do not start
+a language server instance."
+  (when (or (bound-and-true-p eglot-lsp-context)
+            lean4--workspace-message-enabled)
+    (let* ((normalize (lambda (dir) (abbreviate-file-name (file-truename dir))))
+           (roots (mapcar normalize lean4-workspace-roots))
+           (excls (mapcar normalize lean4-workspace-exclusions))
+           (ignore-case (file-name-case-insensitive-p file-name))
+           (contains (lambda (file-name list)
+                       (seq-some (lambda (f)
+                                   (if ignore-case
+                                       (string-equal-ignore-case file-name f)
+                                     (string-equal file-name f)))
+                                 list)))
+           root
+           excluded)
+      ;; Search for configured roots and exclusions.
+      (if-let ((dir (locate-dominating-file
+                     file-name
+                     (lambda (file-name)
+                       (when (file-directory-p file-name)
+                         (or (funcall contains file-name roots)
+                             (setq excluded
+                                   (funcall contains file-name excls))))))))
+          (unless excluded
+            (setq root dir))
+        ;; Configured directory not found. Now search for a lakefile.
+        (while-let ((dir (locate-dominating-file file-name "lakefile.lean")))
+          ;; We found a lakefile, but maybe it belongs to a package.
+          ;; Continue looking until there are no more lakefiles.
+          (setq root dir)
+          (setq file-name (file-name-directory (directory-file-name dir)))))
+      (if root
+          (cons 'lake root)
+        (when (and lean4--workspace-message-enabled (not excluded))
+          (message
+           "File does not belong to a workspace and no lakefile found. \
+Customize the variables `lean4-workspace-roots' and \
+`lean4-workspace-exclusions' to define workspaces."))))))
 
 (push #'lean4-project-find project-find-functions)
 
@@ -250,9 +300,13 @@ Invokes `lean4-mode-hook'."
   (if (fboundp 'electric-indent-local-mode)
       (electric-indent-local-mode -1))
   ;; (abbrev-mode 1)
-  (pcase-dolist (`(,hook . ,fn) lean4-hooks-alist)
-    (add-hook hook fn nil 'local))
-  (eglot-ensure))
+  (when buffer-file-name
+    (let ((lean4--workspace-message-enabled t))
+      (if (lean4-project-find buffer-file-truename)
+          (progn
+            (eglot-ensure)
+            (pcase-dolist (`(,hook . ,fn) lean4-hooks-alist)
+              (add-hook hook fn nil 'local)))))))
 
 (defun lean4--version ()
   "Return Lean version as a list `(MAJOR MINOR PATCH)'."
