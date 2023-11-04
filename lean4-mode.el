@@ -166,9 +166,19 @@ tab completion (if configured)."
 The functions are run only once for each time Emacs becomes idle.")
 
 (defvar lean4--idle-timer nil)
+(defvar lean4--idle-buffer nil)
+(defvar lean4--idle-point nil)
+(defvar lean4--idle-tick nil)
 
 (defun lean4--idle-function ()
-  (run-hooks 'lean4-idle-hook))
+  (when (eq major-mode 'lean4-mode)
+    (unless (and (eq lean4--idle-buffer (current-buffer))
+                 (eq lean4--idle-point (point))
+                 (eq lean4--idle-tick (buffer-modified-tick)))
+      (setq lean4--idle-buffer (current-buffer))
+      (setq lean4--idle-point (point))
+      (setq lean4--idle-tick (buffer-modified-tick))
+      (run-hooks 'lean4-idle-hook))))
 
 (defun lean4--start-idle-timer ()
   (unless lean4--idle-timer
@@ -187,10 +197,6 @@ The functions are run only once for each time Emacs becomes idle.")
     ;; Handle events that may start automatic syntax checks
     (before-save-hook . lean4-whitespace-cleanup)
     ;; info view
-    ;; update errors immediately, but delay querying goal
-    (flycheck-after-syntax-check-hook . lean4-info-buffer-redisplay-debounced)
-    (post-command-hook . lean4-info-buffer-redisplay-debounced)
-    (eglot--managed-mode-hook . lean4-info-buffer-redisplay-debounced)
     (lean4-idle-hook . lean4-info-buffer-refresh))
   "Hooks which lean4-mode needs to hook in.
 
@@ -373,7 +379,7 @@ otherwise return '/path/to/lean --server'."
                                                 &key uri &allow-other-keys)
   "Handle notification textDocument/publishDiagnostics."
   (lean4-with-uri-buffers server uri
-    (lean4-info-buffer-redisplay-debounced)
+    (lean4-info-buffer-redisplay)
     (flymake-start)))
 
 (cl-defmethod eglot-register-capability ((_server lean4-eglot-lsp-server)

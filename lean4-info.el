@@ -54,12 +54,15 @@ This mode is only used in temporary buffers, for fontification."
 
 (defmacro lean4-with-info-output-to-buffer (buffer &rest body)
   "Execute BODY redirecting `print' output to BUFFER."
-  `(let ((buf (get-buffer ,buffer)))
-     (with-current-buffer buf
-       (let ((inhibit-read-only t)
-             (standard-output buf))
-         (erase-buffer)
-         ,@body))))
+  (declare (indent 2)
+           (debug (form &rest form)))
+  (let ((buf-var (make-symbol "buf")))
+    `(let ((,buf-var (get-buffer ,buffer)))
+       (with-current-buffer ,buf-var
+         (let ((inhibit-read-only t)
+               (standard-output ,buf-var))
+           (erase-buffer)
+           ,@body)))))
 
 (defun lean4-ensure-info-buffer (buffer)
   "Create BUFFER if it does not exist.
@@ -170,134 +173,33 @@ The buffer is supposed to be the *Lean Goal* buffer."
                           'font-lock-face 'font-lock-comment-face)
               'fixedcase 'literal))))))))
 
-
-;; Debouncing
-;; ~~~~~~~~~~~
-;; We want to update the Lean4 info buffer as seldom as possible,
-;; since magit-section is slow at rendering. We
-;; wait a small duration (`debounce-delay-sec') when we get a
-;; redisplay request, to see if there is a redisplay request in the
-;; future that invalidates the current request (debouncing).
-;; Pictorially,
-;; (a) One request:
-;; --r1
-;; --r1.wait
-;; ----------r1.render
-;; (b) Two requests in quick succession:
-;; --r1
-;; --r1.wait
-;; --------r2(cancel r1.wait)
-;; --------r2.wait
-;; ---------------r2.render
-;; (c) Two requests, not in succession:
-;; --r1
-;; --r1.wait
-;; ---------r1.render
-;; ------------------r2
-;; ------------------r2.wait
-;; -------------------------r2.render
-;; This delaying can lead to a pathological case where we continually
-;; stagger, while not rendering anything:
-;; --r1
-;; --r1.wait
-;; --------r2(cancel r1.wait)
-;; --------r2.wait
-;; --------------r3(cancel r2.wait)
-;; ---------------r3.wait
-;; ---------------------r4(cancel r3.wait)
-;; ---------------------...
-;; We prevent this pathological case by keeping track of when
-;; when we began debouncing in `lean4-info-buffer-debounce-begin-time'.
-;; If we have been debouncing for longer than
-;; `lean4-info-buffer-debounce-upper-bound-sec', then we
-;; immediately write instead of debouncing;
-;; `max-debounces' times. Upon trying to stagger the
-;; `max-debounces'th request, we immediately render:
-;; begin-time:nil----t0----------------nil-------
-;;            -------r1                |
-;;            -------r1.wait           |
-;;            -------|-----r2(cancel r1.wait)
-;;            -------|-----r2.wait     |
-;;            -------|-----------r3(cancel r2.wait)
-;;            -------|-----------r3.wait
-;;            -------|-----------------r4(cancel r3.wait)
-;;            -------|-----------------|
-;;                   >-----------------<
-;;                   >longer than `debounce-upper-bound-sec'<
-;;            -------------------------r4.render(FORCED)
-
-
-(defcustom lean4-info-buffer-debounce-delay-sec 0.1
-  "Duration of time we wait before writing to *Lean Goal*."
-  :group 'lean4-info
-  :type 'number)
-
-
-(defvar lean4-info-buffer-debounce-timer nil
-  "Timer that is used to debounce Lean4 info view refresh.")
-
-
-(defvar lean4-info-buffer-debounce-begin-time nil
-  "Return the time we have begun debouncing.
-
-The returned value is nil if we are not currently debouncing.
-Otherwise, is a timestamp as given by `current-time'.")
-
-(defcustom lean4-info-buffer-debounce-upper-bound-sec
-  0.5
-  "Maximum time we are allowed to stagger debouncing.
-
-If we recieve a request such that we have been debouncing for longer than
-`lean4-info-buffer-debounce-begin-time', then we immediately run the request."
-  :group 'lean4-info
-  :type 'number)
-
-;;  Debounce implementation modifed from lsp-lens
-;; https://github.com/emacs-lsp/lsp-mode/blob/2f0ea2e396ec9a570f2a2aeb097c304ddc61ebee/lsp-lens.el#L140
-(defun lean4-info-buffer-redisplay-debounced ()
-  "Debounced version of `lean4-info-buffer-redisplay'.
-This version ensures that info buffer is not repeatedly written to.  This is to
-prevent lag, because magit is quite slow at building sections."
-  ;;  if we have not begun debouncing, setup debouncing begin time.
-  (if (not lean4-info-buffer-debounce-begin-time)
-      (setq lean4-info-buffer-debounce-begin-time (current-time)))
-  ;; if time since we began debouncing is too long...
-  (if (>= (time-to-seconds
-	   (time-subtract (current-time)
-			  lean4-info-buffer-debounce-begin-time))
-	  lean4-info-buffer-debounce-upper-bound-sec)
-      ;;  then redisplay immediately.
-      (progn
-	;;  We have stopped debouncing.
-	(setq lean4-info-buffer-debounce-begin-time nil)
-	(lean4-info-buffer-redisplay))
-    ;; else cancel current timer, create new debounced timer.
-    (-some-> lean4-info-buffer-debounce-timer cancel-timer)
-    (setq lean4-info-buffer-debounce-timer ; set new timer
-	  (run-with-timer
-	   lean4-info-buffer-debounce-delay-sec
-	   nil				; don't repeat timer
-	   (lambda ()
-	     ;; We have stopped debouncing.
-	     (setq lean4-info-buffer-debounce-begin-time nil)
-	     (lean4-info-buffer-redisplay))))))
-
 (defun lean4-info-buffer-refresh ()
   "Refresh the *Lean Goal* buffer."
-  (let ((inhibit-message t)
-        (server (eglot-current-server)))
+  (let* ((server (eglot-current-server))
+         (buf (current-buffer))
+         (goals :none)
+         (term-goal :none)
+         (handle-response
+          (lambda ()
+            (when (and (not (eq goals :none))
+                       (not (eq term-goal :none))
+                       (buffer-live-p buf))
+              (with-current-buffer buf
+                (setq lean4-info--goals goals)
+                (setq lean4-info--term-goal term-goal)
+                (lean4-info-buffer-redisplay))))))
     (when (and server (lean4-info-buffer-active lean4-info-buffer-name))
       (eglot--signal-textDocument/didChange)
       (jsonrpc-async-request
        server :$/lean/plainGoal (eglot--TextDocumentPositionParams)
        :success-fn (lambda (result)
-                     (setq lean4-info--goals (cl-getf result :goals))
-                     (lean4-info-buffer-redisplay-debounced)))
+                     (setq goals (cl-getf result :goals))
+                     (funcall handle-response)))
       (jsonrpc-async-request
        server :$/lean/plainTermGoal (eglot--TextDocumentPositionParams)
        :success-fn (lambda (result)
-                     (setq lean4-info--term-goal (cl-getf result :goal))
-                     (lean4-info-buffer-redisplay-debounced))))))
+                     (setq term-goal (cl-getf result :goal))
+                     (funcall handle-response))))))
 
 (defun lean4-toggle-info ()
   "Show infos at the current point."
