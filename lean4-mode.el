@@ -116,8 +116,8 @@ This function restarts the server subprocess for the current
 file, recompiling, and reloading all imports."
   (interactive)
   (when eglot--managed-mode
-    (eglot--managed-mode -1)
-    (eglot--managed-mode)))
+    (eglot--signal-textDocument/didClose)
+    (eglot--signal-textDocument/didOpen)))
 
 (defun lean4-indent-line ()
   "Lean 4 indent line function.
