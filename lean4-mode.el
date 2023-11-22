@@ -170,6 +170,10 @@ The functions are run only once for each time Emacs becomes idle.")
 (defvar lean4--idle-point nil)
 (defvar lean4--idle-tick nil)
 
+(defun lean4--idle-invalidate ()
+  "Cause lean4--idle-function to act as if something has changed when next run."
+  (setq lean4--idle-buffer nil))
+
 (defun lean4--idle-function ()
   (when (eq major-mode 'lean4-mode)
     (unless (and (eq lean4--idle-buffer (current-buffer))
