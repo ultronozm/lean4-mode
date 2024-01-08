@@ -99,6 +99,10 @@ The buffer is supposed to be the *Lean Goal* buffer."
 
 (defvar lean4-info--goals nil)
 (defvar lean4-info--term-goal nil)
+(defvar lean4-info--server nil)
+(defvar lean4-info--textDocument nil)
+(defvar lean4-info--sessionId nil)
+(defvar lean4-info--position nil)
 
 (defun lean4-info--diagnostics ()
   (nreverse
@@ -176,6 +180,69 @@ The buffer is supposed to be the *Lean Goal* buffer."
                           'font-lock-face 'font-lock-comment-face)
               'fixedcase 'literal))))))))
 
+(defvar lean4-info-plain t)
+
+(defun lean4--uri ()
+  (plist-get
+   (plist-get (eglot--TextDocumentPositionParams) :textDocument)
+   :uri))
+
+(defun lean4--session-id-sync ()
+  (let*
+      ((server (eglot-current-server))
+       (uri (lean4--uri))
+       (response (jsonrpc-request server :$/lean/rpc/connect `(:uri ,uri))))
+    (plist-get response :sessionId)))
+
+(defun lean4-info-parse-goal (goal)
+  (let* ((userName (plist-get goal :userName))
+         (type (plist-get goal :type))
+         (hyps (plist-get goal :hyps))
+         (goalPrefix (plist-get goal :goalPrefix))
+         (ctx (plist-get goal :ctx))
+         (p (plist-get ctx :p)))
+    (concat
+     (when userName (concat "case " userName "\n"))
+     (mapconcat (lambda (hyp)
+                  (lean4-info-parse-hyp hyp p))
+                hyps "\n")
+     "\n"
+     goalPrefix
+     (lean4-info-parse-type type p))))
+
+(defun lean4-info-parse-hyp (hyp p)
+  (let* ((type (plist-get hyp :type))
+         (names (plist-get hyp :names)))
+    (concat (mapconcat #'identity names
+                       (propertize " " 'lean4-p p))
+            (propertize " : " 'lean4-p p)
+            (lean4-info-parse-type type p))))
+
+(defun lean4-info-parse-type (type _p)
+  (let* ((tag (plist-get type :tag)))
+    (lean4-info-parse-tag tag)))
+
+(defun lean4-info-parse-tag (tag)
+  (let* ((tag0 (aref tag 0))
+         (info (plist-get tag0 :info))
+         (p (plist-get info :p))
+         (tag1 (aref tag 1)))
+    (cond
+     ((equal (car tag1) :text)
+      (if p
+          (propertize (cadr tag1) 'lean4-p p)
+        (cadr tag1)))
+     ((equal (car tag1) :append)
+      (mapconcat (lambda (item)
+                   (cond
+                    ((equal (car item) :text)
+                     (if p
+                         (propertize (cadr item) 'lean4-p p)
+                       (cadr item)))
+                    ((equal (car item) :tag)
+                     (lean4-info-parse-tag (cadr item)))))
+                 (cadr tag1))))))
+
 (defun lean4-info-buffer-refresh ()
   "Refresh the *Lean Goal* buffer."
   (let* ((server (eglot-current-server))
@@ -187,28 +254,107 @@ The buffer is supposed to be the *Lean Goal* buffer."
             (when (and (not (eq goals :none))
                        (not (eq term-goal :none))
                        (buffer-live-p buf))
+              ;; print goals and term-goal to *DebugInfo* buffer:
+              (with-current-buffer (get-buffer-create "*DebugInfo*")
+                (erase-buffer)
+                (insert (format "goals: %s\n" goals))
+                (insert (format "term-goal: %s\n" term-goal)))
               (with-current-buffer buf
                 (setq lean4-info--goals goals)
                 (setq lean4-info--term-goal term-goal)
                 (lean4-info-buffer-redisplay))))))
     (when (and server (lean4-info-buffer-active lean4-info-buffer-name))
       (eglot--signal-textDocument/didChange)
-      (jsonrpc-async-request
-       server :$/lean/plainGoal (eglot--TextDocumentPositionParams)
-       :success-fn (lambda (result)
-                     (setq goals (cl-getf result :goals))
-                     (funcall handle-response)))
-      (jsonrpc-async-request
-       server :$/lean/plainTermGoal (eglot--TextDocumentPositionParams)
-       :success-fn (lambda (result)
-                     (setq term-goal (cl-getf result :goal))
-                     (funcall handle-response))))))
+      (let* ((textdoc-pos (eglot--TextDocumentPositionParams))
+             (textDocument (plist-get textdoc-pos :textDocument))
+             (position (plist-get textdoc-pos :position)))
+        (if lean4-info-plain
+            (progn
+              (jsonrpc-async-request
+               server :$/lean/plainGoal (eglot--TextDocumentPositionParams)
+               :success-fn (lambda (result)
+                             (setq goals (cl-getf result :goals))
+                             (funcall handle-response)))
+              (jsonrpc-async-request
+               server :$/lean/plainTermGoal (eglot--TextDocumentPositionParams)
+               :success-fn (lambda (result)
+                             (setq term-goal (cl-getf result :goal))
+                             (funcall handle-response))))
+          ;; We save these for the sake of subsequent requests made
+          ;; from the info buffer, where they are not directly
+          ;; available.
+          (setq lean4-info--server server)
+          (setq lean4-info--textDocument textDocument)
+          (setq lean4-info--sessionId (lean4--session-id-sync))
+          (setq lean4-info--position position)
+          (jsonrpc-async-request
+           server :$/lean/rpc/call
+           `(:method "Lean.Widget.getInteractiveGoals"
+                     :sessionId ,lean4-info--sessionId
+                     :textDocument ,textDocument
+                     :position ,position
+                     :params (:textDocument ,textDocument
+                                            :position ,position
+                                            ))
+           :success-fn
+           (lambda (result)
+             (setq goals (when result
+                           (vconcat (mapcar #'lean4-info-parse-goal
+                                            (cl-getf result :goals)))))
+             (funcall handle-response)))
+          (jsonrpc-async-request
+           server :$/lean/rpc/call
+           `(:method "Lean.Widget.getInteractiveTermGoal"
+                     :sessionId ,lean4-info--sessionId
+                     :textDocument ,textDocument
+                     :position ,position
+                     :params (:textDocument ,textDocument
+                                            :position ,position
+                                            ))
+           :success-fn
+           (lambda (result)
+             (setq term-goal (when result (lean4-info-parse-goal result)))
+             (funcall handle-response))))))))
 
 (defun lean4-toggle-info ()
   "Show infos at the current point."
   (interactive)
   (lean4-toggle-info-buffer lean4-info-buffer-name)
   (lean4-info-buffer-refresh))
+
+(defun lean4-info-docs (&optional pos)
+  "Get hover docs at point in info buffer."
+  (interactive)
+  (unless pos (setq pos (point)))
+  (let* ((p (get-text-property pos 'lean4-p))
+         (whatever)
+         (handle-response
+          (lambda ()
+            (message whatever))))
+    (when (and lean4-info--server p)
+      (jsonrpc-async-request
+       lean4-info--server :$/lean/rpc/call
+       `(:method "Lean.Widget.InteractiveDiagnostics.infoToInteractive"
+                 :sessionId ,lean4-info--sessionId
+                 :textDocument ,lean4-info--textDocument
+                 :position ,lean4-info--position
+                 :params (:p ,p))
+       :success-fn
+       (lambda (result)
+         (message (format "reuslt: %s" result))
+         (let ((doc
+                (plist-get
+                 result
+                 :doc))
+               (type
+                (lean4-info-parse-type
+                 (plist-get result :type)
+                 nil)))
+           (setq whatever
+                 (format "type: %s\ndoc: %s" type doc))
+           )
+         (funcall handle-response))))))
+
 
 
 (provide 'lean4-info)
