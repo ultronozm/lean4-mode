@@ -210,5 +210,6 @@ The buffer is supposed to be the *Lean Goal* buffer."
   (lean4-toggle-info-buffer lean4-info-buffer-name)
   (lean4-info-buffer-refresh))
 
+
 (provide 'lean4-info)
 ;;; lean4-info.el ends here
