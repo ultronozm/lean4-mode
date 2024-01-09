@@ -380,12 +380,12 @@ The buffer is supposed to be the *Lean Goal* buffer."
     (let* ((pos (point))
            (p (get-text-property pos 'lean4-p)))
       (let* ((region (lean4-info--widget-region pos))
-                    (min (car region))
-                    (max (cdr region)))
-               (when (and min max)
-                 ;; TODO: this doesn't do the correct range.  should
-                 ;; store all "parents" as text properties
-                 (pulse-momentary-highlight-region min max)))
+             (min (car region))
+             (max (cdr region)))
+        (when (and min max)
+          ;; TODO: this doesn't do the correct range.  should
+          ;; store all "parents" as text properties
+          (pulse-momentary-highlight-region min max)))
       (when (and lean4-info--server p)
         (jsonrpc-async-request
          lean4-info--server :$/lean/rpc/call
@@ -399,15 +399,15 @@ The buffer is supposed to be the *Lean Goal* buffer."
            (with-current-buffer (get-buffer-create "*DebugInfoResults*")
              (erase-buffer)
              (insert (format "result: %s" result)))
-           (let ((doc (plist-get result :doc))
-                 (type (lean4-info-parse-type (plist-get result :type)
-                                              nil))
-                 (expr (lean4-info-parse-expr (plist-get result :exprExplicit))))
+           (let* ((doc (plist-get result :doc))
+                  (type (lean4-info-parse-type (plist-get result :type)
+                                               nil))
+                  (expr (lean4-info-parse-expr (plist-get result :exprExplicit)))
+                  (expr-type (and type expr (concat expr " : " type)))
+                  (sep (when (and expr-type doc) "\n")))
              (funcall cb
-                      (concat expr " : " type
-                              (when (and (or type expr) doc)
-                                "\n")
-                              doc)))))))))
+                      (concat expr-type sep doc)
+                      :echo (concat expr-type sep (when doc (substring doc 0 (string-match "\n" doc))))))))))))
 
 
 
