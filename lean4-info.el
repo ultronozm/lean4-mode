@@ -206,46 +206,46 @@ The buffer is supposed to be the *Lean Goal* buffer."
     (concat
      (when userName (concat "case " userName "\n"))
      (mapconcat (lambda (hyp)
-                  (lean4-info-parse-hyp hyp p))
+                  (lean4-info-parse-hyp hyp (list p)))
                 hyps "\n")
      "\n"
      goalPrefix
-     (lean4-info-parse-type type p))))
+     (lean4-info-parse-type type (list p)))))
 
-(defun lean4-info-parse-hyp (hyp p)
+(defun lean4-info-parse-hyp (hyp ps)
   (let* ((type (plist-get hyp :type))
          (names (plist-get hyp :names)))
     (concat (mapconcat #'identity names
-                       (propertize " " 'lean4-p p))
-            (propertize " : " 'lean4-p p)
-            (lean4-info-parse-type type p))))
+                       (propertize " " 'lean4-p ps))
+            (propertize " : " 'lean4-p ps)
+            (lean4-info-parse-type type ps))))
 
-(defun lean4-info-parse-type (type _p)
+(defun lean4-info-parse-type (type ps)
   (let* ((tag (plist-get type :tag)))
-    (lean4-info-parse-tag tag)))
+    (lean4-info-parse-tag tag ps)))
 
-(defun lean4-info-parse-tag (tag)
+(defun lean4-info-parse-tag (tag ps)
   (let* ((tag0 (aref tag 0))
          (info (plist-get tag0 :info))
          (p (plist-get info :p))
          (tag1 (aref tag 1)))
-    (lean4-info-parse-expr tag1 p)))
+    (lean4-info-parse-expr tag1 (cons p ps))))
 
-(defun lean4-info-parse-expr (expr &optional p)
+(defun lean4-info-parse-expr (expr &optional ps)
   (cond
    ((equal (car expr) :text)
-    (if p
-        (propertize (cadr expr) 'lean4-p p)
+    (if ps
+        (propertize (cadr expr) 'lean4-p ps)
       (cadr expr)))
    ((equal (car expr) :append)
     (mapconcat (lambda (item)
                  (cond
                   ((equal (car item) :text)
-                   (if p
-                       (propertize (cadr item) 'lean4-p p)
+                   (if ps
+                       (propertize (cadr item) 'lean4-p ps)
                      (cadr item)))
                   ((equal (car item) :tag)
-                   (lean4-info-parse-tag (cadr item)))))
+                   (lean4-info-parse-tag (cadr item) ps))))
                (cadr expr)))))
 
 (defun lean4-info-buffer-refresh ()
@@ -291,7 +291,10 @@ The buffer is supposed to be the *Lean Goal* buffer."
           (setq lean4-info--server server)
           (setq lean4-info--textDocument textDocument)
           ;; the following should really be called once per "session",
-          ;; but I'm not sure what that actually means.
+          ;; but I'm not sure what that actually means.  the way
+          ;; things are written down, *Lean Goal* eventually goes out
+          ;; of sync with the main buffer, and I suspect it's probably
+          ;; because we're calling this function more than once.
           (setq lean4-info--sessionId (lean4--session-id-sync))
           (setq lean4-info--position position)
           (jsonrpc-async-request
@@ -334,7 +337,8 @@ The buffer is supposed to be the *Lean Goal* buffer."
   "Get hover docs at point in info buffer."
   (interactive)
   (unless pos (setq pos (point)))
-  (let* ((p (get-text-property pos 'lean4-p))
+  (let* ((ps (get-text-property pos 'lean4-p))
+         (p (car ps))
          (whatever)
          (handle-response
           (lambda ()
@@ -360,16 +364,17 @@ The buffer is supposed to be the *Lean Goal* buffer."
 
 (defun lean4-info--widget-region (&optional pos)
   (unless pos (setq pos (point)))
-  (when-let ((p (get-text-property pos 'lean4-p)))
-    (let ((start (point-min))
+  (when-let ((ps (get-text-property pos 'lean4-p)))
+    (let ((p (car ps))
+          (start (point-min))
           (end (point-max)))
       (while (and start
                   (< start (point-max))
-                  (not (eq (get-text-property start 'lean4-p) p)))
+                  (not (member p (get-text-property start 'lean4-p))))
         (setq start (next-single-property-change start 'lean4-p nil (point-max))))
       (while (and end
                   (> end (point-min))
-                  (not (eq (get-text-property end 'lean4-p) p)))
+                  (not (member p (get-text-property end 'lean4-p))))
         (setq end (previous-single-property-change end 'lean4-p nil (point-min))))
       (setq end (next-single-property-change end 'lean4-p nil (point-max)))
       (cons start end))))
@@ -378,13 +383,11 @@ The buffer is supposed to be the *Lean Goal* buffer."
   "Eldoc function for info buffer."
   (unless lean4-info-plain
     (let* ((pos (point))
-           (p (get-text-property pos 'lean4-p)))
+           (p (car (get-text-property pos 'lean4-p))))
       (let* ((region (lean4-info--widget-region pos))
              (min (car region))
              (max (cdr region)))
         (when (and min max)
-          ;; TODO: this doesn't do the correct range.  should
-          ;; store all "parents" as text properties
           (pulse-momentary-highlight-region min max)))
       (when (and lean4-info--server p)
         (jsonrpc-async-request
@@ -407,7 +410,9 @@ The buffer is supposed to be the *Lean Goal* buffer."
                   (sep (when (and expr-type doc) "\n")))
              (funcall cb
                       (concat expr-type sep doc)
-                      :echo (concat expr-type sep (when doc (substring doc 0 (string-match "\n" doc))))))))))))
+                      :echo (concat expr-type sep
+                                    (when doc
+                                      (substring doc 0 (string-match "\n" doc))))))))))))
 
 
 
