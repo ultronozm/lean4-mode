@@ -185,11 +185,19 @@ The buffer is supposed to be the *Lean Goal* buffer."
 (defvar lean4-info-plain t)
 
 (defun lean4--uri ()
+  "Return the URI of the current buffer.
+This is a string like \"file:///path/to/file\"."
   (plist-get
    (plist-get (eglot--TextDocumentPositionParams) :textDocument)
    :uri))
 
+;; PN: In VSCode, the session ID seems to persist over the whole
+;; session, whereas here, it seems to get reset now and then, so we
+;; need to call this function from time to time.
 (defun lean4--session-id-sync (&optional buf)
+  "Return the session ID of the current buffer.
+This is achieved via an rpc/connect request, which resets the
+session ID."
   (unless buf (setq buf (current-buffer)))
   (with-current-buffer buf
     (let*
@@ -201,6 +209,7 @@ The buffer is supposed to be the *Lean Goal* buffer."
       id)))
 
 (defun lean4-info-parse-goal (goal)
+  "Parse GOAL into propertized string."
   (let* ((userName (plist-get goal :userName))
          (type (plist-get goal :type))
          (hyps (plist-get goal :hyps))
@@ -217,6 +226,8 @@ The buffer is supposed to be the *Lean Goal* buffer."
      (lean4-info-parse-type type (list p)))))
 
 (defun lean4-info-parse-hyp (hyp ps)
+  "Parse hypothesis HYP into propertized string.
+PS is a list of tag IDs."
   (let* ((type (plist-get hyp :type))
          (names (plist-get hyp :names)))
     (concat (mapconcat #'identity names
@@ -225,10 +236,14 @@ The buffer is supposed to be the *Lean Goal* buffer."
             (lean4-info-parse-type type ps))))
 
 (defun lean4-info-parse-type (type ps)
+  "Parse TYPE into propertized string.
+PS is a list of tag IDs."
   (let* ((tag (plist-get type :tag)))
     (lean4-info-parse-tag tag ps)))
 
 (defun lean4-info-parse-tag (tag ps)
+  "Parse TAG into propertized string.
+PS is a list of tag IDs."
   (let* ((tag0 (aref tag 0))
          (info (plist-get tag0 :info))
          (p (plist-get info :p))
@@ -236,6 +251,8 @@ The buffer is supposed to be the *Lean Goal* buffer."
     (lean4-info-parse-expr tag1 (cons p ps))))
 
 (defun lean4-info-parse-expr (expr &optional ps)
+  "Parse EXPR into propertized string.
+PS is a list of tag IDs."
   (cond
    ((equal (car expr) :text)
     (if ps
@@ -367,6 +384,8 @@ The buffer is supposed to be the *Lean Goal* buffer."
          (funcall handle-response))))))
 
 (defun lean4-info--widget-region (&optional pos)
+  "Return the region of the widget at POS.
+POS defaults to the current point."
   (unless pos (setq pos (point)))
   (when-let ((ps (get-text-property pos 'lean4-p)))
     (let ((p (car ps))
@@ -384,7 +403,8 @@ The buffer is supposed to be the *Lean Goal* buffer."
       (cons start end))))
 
 (defun lean4-info-eldoc-function (cb)
-  "Eldoc function for info buffer."
+  "Eldoc function for info buffer.
+CB is the callback function provided by Eldoc."
   (unless lean4-info-plain
     (let* ((pos (point))
            (p (car (get-text-property pos 'lean4-p))))
