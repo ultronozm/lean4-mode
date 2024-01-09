@@ -189,12 +189,16 @@ The buffer is supposed to be the *Lean Goal* buffer."
    (plist-get (eglot--TextDocumentPositionParams) :textDocument)
    :uri))
 
-(defun lean4--session-id-sync ()
-  (let*
-      ((server (eglot-current-server))
-       (uri (lean4--uri))
-       (response (jsonrpc-request server :$/lean/rpc/connect `(:uri ,uri))))
-    (plist-get response :sessionId)))
+(defun lean4--session-id-sync (&optional buf)
+  (unless buf (setq buf (current-buffer)))
+  (with-current-buffer buf
+    (let*
+        ((server (eglot-current-server))
+         (uri (lean4--uri))
+         (response (jsonrpc-request server :$/lean/rpc/connect `(:uri ,uri)))
+         (id (plist-get response :sessionId)))
+      ;; (message (format-time-string "[%Y-%m-%d %H:%M:%S] %s" (current-time)) id)
+      id)))
 
 (defun lean4-info-parse-goal (goal)
   (let* ((userName (plist-get goal :userName))
@@ -407,7 +411,8 @@ The buffer is supposed to be the *Lean Goal* buffer."
                                                nil))
                   (expr (lean4-info-parse-expr (plist-get result :exprExplicit)))
                   (expr-type (and type expr (concat expr " : " type)))
-                  (sep (when (and expr-type doc) "\n")))
+                  (sep (when (and expr-type doc)
+                         "\n")))
              (funcall cb
                       (concat expr-type sep doc)
                       :echo (concat expr-type sep
