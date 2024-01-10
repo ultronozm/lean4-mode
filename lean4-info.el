@@ -101,10 +101,6 @@ The buffer is supposed to be the *Lean Goal* buffer."
 
 (defvar lean4-info--goals nil)
 (defvar lean4-info--term-goal nil)
-(defvar lean4-info--server nil)
-(defvar lean4-info--textDocument nil)
-(defvar lean4-info--sessionId nil)
-(defvar lean4-info--position nil)
 
 (defun lean4-info--diagnostics ()
   (nreverse
@@ -184,29 +180,35 @@ The buffer is supposed to be the *Lean Goal* buffer."
 
 (defvar lean4-info-plain t)
 
-(defun lean4--uri ()
-  "Return the URI of the current buffer.
-This is a string like \"file:///path/to/file\"."
-  (plist-get
-   (plist-get (eglot--TextDocumentPositionParams) :textDocument)
-   :uri))
+(defvar lean4--rpc-server nil)
+(defvar lean4--rpc-textDocument nil)
+(defvar lean4--rpc-position nil)
+(defvar lean4--rpc-sessionId nil)
+(defvar lean4--rpc-timer nil)
 
-;; PN: In VSCode, the session ID seems to persist over the whole
-;; session, whereas here, it seems to get reset now and then, so we
-;; need to call this function from time to time.
-(defun lean4--session-id-sync (&optional buf)
-  "Return the session ID of the current buffer.
-This is achieved via an rpc/connect request, which resets the
-session ID."
+(defun lean4--rpc-connect (&optional buf)
+  "Initiate an rpc connection.
+This sets the variables lean4--rpc-*."
   (unless buf (setq buf (current-buffer)))
   (with-current-buffer buf
     (let*
         ((server (eglot-current-server))
-         (uri (lean4--uri))
+         (textdoc-pos (eglot--TextDocumentPositionParams))
+         (uri (plist-get (plist-get textdoc-pos :textDocument) :uri))
          (response (jsonrpc-request server :$/lean/rpc/connect `(:uri ,uri)))
-         (id (plist-get response :sessionId)))
-      ;; (message (format-time-string "[%Y-%m-%d %H:%M:%S] %s" (current-time)) id)
-      id)))
+         (sessionId (plist-get response :sessionId)))
+      (setq lean4--rpc-server server)
+      (setq lean4--rpc-textDocument (plist-get textdoc-pos :textDocument))
+      (setq lean4--rpc-position (plist-get textdoc-pos :position))
+      (setq lean4--rpc-sessionId sessionId)
+      (unless lean4--rpc-timer
+        (setq lean4--rpc-timer
+              (run-with-timer 0 5 #'lean4-info--rpc-keepalive))))))
+
+(defun lean4-info--rpc-keepalive ()
+  (when lean4--rpc-server
+    (jsonrpc-notify lean4--rpc-server :$/lean/rpc/keepAlive `(:uri ,(plist-get lean4--rpc-textDocument :uri)
+                                                                   :sessionId ,lean4--rpc-sessionId))))
 
 (defun lean4-info-parse-goal (goal)
   "Parse GOAL into propertized string."
@@ -291,61 +293,52 @@ PS is a list of tag IDs."
                 (lean4-info-buffer-redisplay))))))
     (when (and server (lean4-info-buffer-active lean4-info-buffer-name))
       (eglot--signal-textDocument/didChange)
-      (let* ((textdoc-pos (eglot--TextDocumentPositionParams))
-             (textDocument (plist-get textdoc-pos :textDocument))
-             (position (plist-get textdoc-pos :position)))
-        (if lean4-info-plain
-            (progn
-              (jsonrpc-async-request
-               server :$/lean/plainGoal (eglot--TextDocumentPositionParams)
-               :success-fn (lambda (result)
-                             (setq goals (cl-getf result :goals))
-                             (funcall handle-response)))
-              (jsonrpc-async-request
-               server :$/lean/plainTermGoal (eglot--TextDocumentPositionParams)
-               :success-fn (lambda (result)
-                             (setq term-goal (cl-getf result :goal))
-                             (funcall handle-response))))
-          ;; We save these for the sake of subsequent requests made
-          ;; from the info buffer, where they are not directly
-          ;; available.
-          (setq lean4-info--server server)
-          (setq lean4-info--textDocument textDocument)
-          ;; the following should really be called once per "session",
-          ;; but I'm not sure what that actually means.  the way
-          ;; things are written down, *Lean Goal* eventually goes out
-          ;; of sync with the main buffer, and I suspect it's probably
-          ;; because we're calling this function more than once.
-          (setq lean4-info--sessionId (lean4--session-id-sync))
-          (setq lean4-info--position position)
-          (jsonrpc-async-request
-           server :$/lean/rpc/call
-           `(:method "Lean.Widget.getInteractiveGoals"
-                     :sessionId ,lean4-info--sessionId
-                     :textDocument ,textDocument
-                     :position ,position
-                     :params (:textDocument ,textDocument
-                                            :position ,position
-                                            ))
-           :success-fn
-           (lambda (result)
-             (setq goals (when result
-                           (vconcat (mapcar #'lean4-info-parse-goal
-                                            (cl-getf result :goals)))))
-             (funcall handle-response)))
-          (jsonrpc-async-request
-           server :$/lean/rpc/call
-           `(:method "Lean.Widget.getInteractiveTermGoal"
-                     :sessionId ,lean4-info--sessionId
-                     :textDocument ,textDocument
-                     :position ,position
-                     :params (:textDocument ,textDocument
-                                            :position ,position
-                                            ))
-           :success-fn
-           (lambda (result)
-             (setq term-goal (when result (lean4-info-parse-goal result)))
-             (funcall handle-response))))))))
+      (if lean4-info-plain
+          (let* ((textdoc-pos (eglot--TextDocumentPositionParams))
+                 (textDocument (plist-get textdoc-pos :textDocument))
+                 (position (plist-get textdoc-pos :position)))
+            (jsonrpc-async-request
+             server :$/lean/plainGoal (eglot--TextDocumentPositionParams)
+             :success-fn (lambda (result)
+                           (setq goals (cl-getf result :goals))
+                           (funcall handle-response)))
+            (jsonrpc-async-request
+             server :$/lean/plainTermGoal (eglot--TextDocumentPositionParams)
+             :success-fn (lambda (result)
+                           (setq term-goal (cl-getf result :goal))
+                           (funcall handle-response))))
+        ;; It might be more elegant to do the following once, when we
+        ;; switch to a lean buffer, but putting it here seems more
+        ;; robust.
+        (lean4--rpc-connect) ;; sets the variables lean4--rpc-*
+        (jsonrpc-async-request
+         server :$/lean/rpc/call
+         `(:method "Lean.Widget.getInteractiveGoals"
+                   :sessionId ,lean4--rpc-sessionId
+                   :textDocument ,lean4--rpc-textDocument
+                   :position ,lean4--rpc-position
+                   :params (:textDocument ,lean4--rpc-textDocument
+                                          :position ,lean4--rpc-position
+                                          ))
+         :success-fn
+         (lambda (result)
+           (setq goals (when result
+                         (vconcat (mapcar #'lean4-info-parse-goal
+                                          (cl-getf result :goals)))))
+           (funcall handle-response)))
+        (jsonrpc-async-request
+         server :$/lean/rpc/call
+         `(:method "Lean.Widget.getInteractiveTermGoal"
+                   :sessionId ,lean4--rpc-sessionId
+                   :textDocument ,lean4--rpc-textDocument
+                   :position ,lean4--rpc-position
+                   :params (:textDocument ,lean4--rpc-textDocument
+                                          :position ,lean4--rpc-position
+                                          ))
+         :success-fn
+         (lambda (result)
+           (setq term-goal (when result (lean4-info-parse-goal result)))
+           (funcall handle-response)))))))
 
 (defun lean4-toggle-info ()
   "Show infos at the current point."
@@ -364,13 +357,13 @@ PS is a list of tag IDs."
          (handle-response
           (lambda ()
             (message whatever))))
-    (when (and lean4-info--server p)
+    (when (and lean4--rpc-server p)
       (jsonrpc-async-request
-       lean4-info--server :$/lean/rpc/call
+       lean4--rpc-server :$/lean/rpc/call
        `(:method "Lean.Widget.InteractiveDiagnostics.infoToInteractive"
-                 :sessionId ,lean4-info--sessionId
-                 :textDocument ,lean4-info--textDocument
-                 :position ,lean4-info--position
+                 :sessionId ,lean4--rpc-sessionId
+                 :textDocument ,lean4--rpc-textDocument
+                 :position ,lean4--rpc-position
                  :params (:p ,p))
        :success-fn
        (lambda (result)
@@ -413,13 +406,13 @@ CB is the callback function provided by Eldoc."
              (max (cdr region)))
         (when (and min max)
           (pulse-momentary-highlight-region min max)))
-      (when (and lean4-info--server p)
+      (when (and lean4--rpc-server p)
         (jsonrpc-async-request
-         lean4-info--server :$/lean/rpc/call
+         lean4--rpc-server :$/lean/rpc/call
          `(:method "Lean.Widget.InteractiveDiagnostics.infoToInteractive"
-                   :sessionId ,lean4-info--sessionId
-                   :textDocument ,lean4-info--textDocument
-                   :position ,lean4-info--position
+                   :sessionId ,lean4--rpc-sessionId
+                   :textDocument ,lean4--rpc-textDocument
+                   :position ,lean4--rpc-position
                    :params (:p ,p))
          :success-fn
          (lambda (result)
@@ -438,6 +431,7 @@ CB is the callback function provided by Eldoc."
                       :echo (concat expr-type sep
                                     (when doc
                                       (substring doc 0 (string-match "\n" doc))))))))))))
+
 
 
 
