@@ -207,8 +207,16 @@ This sets the variables lean4--rpc-*."
 
 (defun lean4-info--rpc-keepalive ()
   (when lean4--rpc-server
-    (jsonrpc-notify lean4--rpc-server :$/lean/rpc/keepAlive `(:uri ,(plist-get lean4--rpc-textDocument :uri)
-                                                                   :sessionId ,lean4--rpc-sessionId))))
+    (condition-case nil
+        (jsonrpc-notify lean4--rpc-server :$/lean/rpc/keepAlive
+                        `(:uri ,(plist-get lean4--rpc-textDocument :uri)
+                               :sessionId ,lean4--rpc-sessionId))
+      (error (cancel-timer lean4--rpc-timer)
+             (setq lean4--rpc-timer nil)
+             (setq lean4--rpc-server nil)
+             (setq lean4--rpc-textDocument nil)
+             (setq lean4--rpc-position nil)
+             (setq lean4--rpc-sessionId nil)))))
 
 (defun lean4-info-parse-goal (goal)
   "Parse GOAL into propertized string."
