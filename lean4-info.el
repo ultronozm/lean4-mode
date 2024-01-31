@@ -435,7 +435,7 @@ CB is the callback function provided by Eldoc."
                   (sep (when (and expr-type doc)
                          "\n")))
              (funcall cb
-                      (concat expr-type sep doc)
+                      (concat expr " : " expr-type sep doc)
                       :echo (concat expr-type sep
                                     (when doc
                                       (substring doc 0 (string-match "\n" doc))))))))))))
