@@ -354,36 +354,6 @@ PS is a list of tag IDs."
   (lean4-toggle-info-buffer lean4-info-buffer-name)
   (lean4-info-buffer-refresh))
 
-;; don't need this function anymore, should delete it eventually
-(defun lean4-info-docs (&optional pos)
-  "Get hover docs at point in info buffer."
-  (interactive)
-  (unless pos (setq pos (point)))
-  (let* ((ps (get-text-property pos 'lean4-p))
-         (p (car ps))
-         (whatever)
-         (handle-response
-          (lambda ()
-            (message whatever))))
-    (when (and lean4--rpc-server p)
-      (jsonrpc-async-request
-       lean4--rpc-server :$/lean/rpc/call
-       `(:method "Lean.Widget.InteractiveDiagnostics.infoToInteractive"
-                 :sessionId ,lean4--rpc-sessionId
-                 :textDocument ,lean4--rpc-textDocument
-                 :position ,lean4--rpc-position
-                 :params (:p ,p))
-       :success-fn
-       (lambda (result)
-         (with-current-buffer (get-buffer-create "*DebugInfoResults*")
-           (erase-buffer)
-           (insert (format "result: %s" result)))
-         (let ((doc (plist-get result :doc))
-               (type (lean4-info-parse-type (plist-get result :type)
-                                            nil)))
-           (setq whatever (format "type: %s\ndoc: %s" type doc)))
-         (funcall handle-response))))))
-
 (defun lean4-info--widget-region (&optional pos)
   "Return the region of the widget at POS.
 POS defaults to the current point."
