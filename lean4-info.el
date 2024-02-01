@@ -52,18 +52,6 @@ This mode is only used in temporary buffers, for fontification."
   :group 'lean
   (set (make-local-variable 'font-lock-defaults) lean4-info-font-lock-defaults))
 
-(defmacro lean4-with-info-output-to-buffer (buffer &rest body)
-  "Execute BODY redirecting `print' output to BUFFER."
-  (declare (indent 2)
-           (debug (form &rest form)))
-  (let ((buf-var (make-symbol "buf")))
-    `(let ((,buf-var (get-buffer ,buffer)))
-       (with-current-buffer ,buf-var
-         (let ((inhibit-read-only t)
-               (standard-output ,buf-var))
-           (erase-buffer)
-           ,@body)))))
-
 (defun lean4-ensure-info-buffer (buffer)
   "Create BUFFER if it does not exist.
 Also choose settings used for the *Lean Goal* buffer."
@@ -126,23 +114,24 @@ The buffer is supposed to be the *Lean Goal* buffer."
     (font-lock-ensure)
     (buffer-string)))
 
-(defun lean4-mk-message-section (caption errors)
+(defun lean4-mk-message-section (value caption errors)
   "Add a section with caption CAPTION and contents ERRORS."
   (when errors
-    (magit-insert-section (magit-section)
+    (magit-insert-section (magit-section value)
       (magit-insert-heading caption)
       (magit-insert-section-body
         (dolist (e errors)
-          (eglot--dbind ((Diagnostic) message range) e
-            (eglot--dbind ((Range) start) range
-              (eglot--dbind ((Position) line character) start
-                (magit-insert-section (magit-section)
-                  (magit-insert-heading (format "%d:%d" (1+ line) character))
-                  (magit-insert-section-body
+          (magit-insert-section (magit-section)
+            (magit-insert-section-body
+              (eglot--dbind ((Diagnostic) message range) e
+                (eglot--dbind ((Range) start) range
+                  (eglot--dbind ((Position) line character) start
+                    (magit-insert-heading (format "%d:%d" (1+ line) character))
                     (insert message "\n")))))))))))
 
 (defun lean4-info-buffer-redisplay ()
-  (let ((inhibit-message t))
+  (let ((inhibit-message t)
+        (inhibit-read-only t))
     (when (lean4-info-buffer-active lean4-info-buffer-name)
       (-let* ((deactivate-mark)         ; keep transient mark
               (line (save-restriction (widen) (1- (line-number-at-pos nil t))))
@@ -152,32 +141,37 @@ The buffer is supposed to be the *Lean Goal* buffer."
                (--split-with (< (lean4-info--diagnostic-end it) line) errors))
               ((errors-here errors-below)
                (--split-with (<= (lean4-info--diagnostic-start it) line) errors)))
-        (lean4-with-info-output-to-buffer
-         lean4-info-buffer-name
-         (when lean4-info--goals
-           (magit-insert-section (magit-section)
-             (magit-insert-heading "Goals:")
-             (magit-insert-section-body
-               (if (> (length lean4-info--goals) 0)
-                   (seq-doseq (g lean4-info--goals)
-                     (magit-insert-section (magit-section)
-                       (insert (lean4-info--fontify-string g) "\n\n")))
-                 (insert "goals accomplished\n\n")))))
-         (when lean4-info--term-goal
-           (magit-insert-section (magit-section)
-             (magit-insert-heading "Expected type:")
-             (magit-insert-section-body
-               (insert (lean4-info--fontify-string lean4-info--term-goal) "\n\n"))))
-         (lean4-mk-message-section "Messages here:" errors-here)
-         (lean4-mk-message-section "Messages below:" errors-below)
-         (lean4-mk-message-section "Messages above:" errors-above)
-         (when lean4-highlight-inaccessible-names
-           (goto-char 0)
-           (while (re-search-forward "\\(\\sw+\\)✝\\([¹²³⁴-⁹⁰]*\\)" nil t)
-             (replace-match
-              (propertize (s-concat (match-string-no-properties 1) (match-string-no-properties 2))
-                          'font-lock-face 'font-lock-comment-face)
-              'fixedcase 'literal))))))))
+        (with-current-buffer lean4-info-buffer-name
+          (erase-buffer)
+          (magit-insert-section (magit-section 'root)
+            (when lean4-info--goals
+              (magit-insert-section (magit-section 'goals)
+                (magit-insert-heading "Goals:")
+                (let ((goals lean4-info--goals))
+                  (magit-insert-section-body
+                    (if (> (length goals) 0)
+                        (seq-doseq (g goals)
+                          (magit-insert-section (magit-section)
+                            (insert (lean4-info--fontify-string g) "\n\n")))
+                      (insert "goals accomplished\n\n"))))))
+            (when lean4-info--term-goal
+              (magit-insert-section (magit-section 'term-goal)
+                (magit-insert-heading "Expected type:")
+                (let ((term-goal lean4-info--term-goal))
+                  (magit-insert-section-body
+                    (insert (lean4-info--fontify-string term-goal) "\n\n")))))
+            (lean4-mk-message-section 'errors-here "Messages here:" errors-here)
+            (lean4-mk-message-section 'errors-below "Messages below:" errors-below)
+            (lean4-mk-message-section 'errors-above "Messages above:" errors-above)
+            (when lean4-highlight-inaccessible-names
+              (goto-char 1)
+              (save-match-data
+                (while (re-search-forward "\\(\\sw+\\)✝\\([¹²³⁴-⁹⁰]*\\)" nil t)
+                  (replace-match
+                   (propertize (s-concat (match-string-no-properties 1)
+                                         (match-string-no-properties 2))
+                               'font-lock-face 'font-lock-comment-face)
+                   'fixedcase 'literal))))))))))
 
 (defcustom lean4-info-plain t
   "If t, then use plain text for info buffer.
@@ -311,9 +305,7 @@ PS is a list of tag IDs."
     (when (and server (lean4-info-buffer-active lean4-info-buffer-name))
       (eglot--signal-textDocument/didChange)
       (if lean4-info-plain
-          (let* ((textdoc-pos (eglot--TextDocumentPositionParams))
-                 (textDocument (plist-get textdoc-pos :textDocument))
-                 (position (plist-get textdoc-pos :position)))
+          (progn
             (jsonrpc-async-request
              server :$/lean/plainGoal (eglot--TextDocumentPositionParams)
              :success-fn (lambda (result)
@@ -417,10 +409,7 @@ CB is the callback function provided by Eldoc."
                       (concat expr-type sep doc)
                       :echo (concat expr-type sep
                                     (when doc
-                                      (substring doc 0 (string-match "\n" doc))))))))))))
-
-
-
+                                      (substring doc 0 (string-match-p "\n" doc))))))))))))
 
 (provide 'lean4-info)
 ;;; lean4-info.el ends here
