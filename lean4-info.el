@@ -179,7 +179,15 @@ The buffer is supposed to be the *Lean Goal* buffer."
                           'font-lock-face 'font-lock-comment-face)
               'fixedcase 'literal))))))))
 
-(defvar lean4-info-plain t)
+(defcustom lean4-info-plain t
+  "If t, then use plain text for info buffer.
+If nil, then enable \"hover docs\" in the info buffer.  This is
+an experimental feature that requires further testing."
+  :type
+  '(choice
+    (const :tag "Plain text" t)
+    (const :tag "Hover docs" nil))
+  :group 'lean4)
 
 (defvar lean4--rpc-server nil)
 (defvar lean4--rpc-textDocument nil)
