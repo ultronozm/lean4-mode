@@ -75,6 +75,7 @@ Also choose settings used for the *Lean Goal* buffer."
                 #'lean4--idle-invalidate nil t)
       (add-hook 'eldoc-documentation-functions #'lean4-info-eldoc-function
                 nil t)
+      (eldoc-mode)
       (set-input-method "Lean")
       (set-syntax-table lean4-syntax-table)
       (setq buffer-read-only t))))
