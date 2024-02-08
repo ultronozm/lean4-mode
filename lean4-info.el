@@ -52,6 +52,8 @@ This mode is only used in temporary buffers, for fontification."
   :group 'lean
   (set (make-local-variable 'font-lock-defaults) lean4-info-font-lock-defaults))
 
+(declare-function lean4--idle-invalidate "lean4-mode")
+
 (defun lean4-ensure-info-buffer (buffer)
   "Create BUFFER if it does not exist.
 Also choose settings used for the *Lean Goal* buffer."
