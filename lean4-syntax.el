@@ -33,7 +33,7 @@
 (defconst lean4-keywords1
   '("import" "prelude" "protected" "private" "noncomputable"
     "unsafe" "partial" "renaming" "hiding" "begin" "constant"
-    "variable" "variables" "theorem" "example" "abbrev"
+    "variable" "variables" "theorem" "lemma" "example" "abbrev"
     "open" "export" "axiom" "inductive" "with"
     "structure" "universe" "universes" "hide"
     "precedence" "match_syntax" "match" "nomatch" "infix" "infixl" "infixr" "notation" "postfix" "prefix" "instance"
