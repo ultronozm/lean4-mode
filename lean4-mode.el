@@ -273,7 +273,8 @@ a language server instance."
           (message
            "File does not belong to a workspace and no lakefile found. \
 Customize the variables `lean4-workspace-roots' and \
-`lean4-workspace-exclusions' to define workspaces."))))))
+`lean4-workspace-exclusions' to define workspaces.")
+          nil)))))
 
 (push #'lean4-project-find project-find-functions)
 
