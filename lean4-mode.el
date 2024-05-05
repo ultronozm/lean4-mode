@@ -167,7 +167,6 @@ The functions are run only once for each time Emacs becomes idle.")
 
 (defvar lean4--idle-timer nil)
 (defvar lean4--idle-buffer nil)
-(defvar lean4--idle-point nil)
 (defvar lean4--idle-tick nil)
 
 (defun lean4--idle-invalidate ()
@@ -176,13 +175,17 @@ The functions are run only once for each time Emacs becomes idle.")
 
 (defun lean4--idle-function ()
   (when (eq major-mode 'lean4-mode)
-    (unless (and (eq lean4--idle-buffer (current-buffer))
-                 (eq lean4--idle-point (point))
-                 (eq lean4--idle-tick (buffer-modified-tick)))
+    (let ((old-buffer lean4--idle-buffer)
+          (old-tick lean4--idle-tick))
       (setq lean4--idle-buffer (current-buffer))
-      (setq lean4--idle-point (point))
       (setq lean4--idle-tick (buffer-modified-tick))
-      (run-hooks 'lean4-idle-hook))))
+      ;; If the user has switched buffer or the buffer is not modified,
+      ;; refresh the info buffer now. Otherwise (if the buffer is modified),
+      ;; do nothing: the `textDocument/publishDiagnostics` notification handler
+      ;; will refresh the info buffer.
+      (when (or (not (eq lean4--idle-buffer old-buffer))
+                (eq lean4--idle-tick old-tick))
+        (lean4-info-buffer-refresh)))))
 
 (defun lean4--start-idle-timer ()
   (unless lean4--idle-timer
@@ -198,10 +201,7 @@ The functions are run only once for each time Emacs becomes idle.")
 
 (defconst lean4-hooks-alist
   '(
-    ;; Handle events that may start automatic syntax checks
-    (before-save-hook . lean4-whitespace-cleanup)
-    ;; info view
-    (lean4-idle-hook . lean4-info-buffer-refresh))
+    (before-save-hook . lean4-whitespace-cleanup))
   "Hooks which lean4-mode needs to hook in.
 
 The `car' of each pair is a hook variable, the `cdr' a function
@@ -447,6 +447,13 @@ Eglot not to validate the version."
                  (when (eq (cl-getf textDocument :version) 0)
                    (setf (cl-getf textDocument :version) nil)))
                documentChanges))))))
+
+(cl-defmethod eglot-handle-notification :after
+  (server (_method (eql textDocument/publishDiagnostics)) &key uri
+           &allow-other-keys)
+  (when (eq (type-of (eglot-current-server)) 'lean4-eglot-lsp-server)
+    (lean4-with-uri-buffers server uri
+      (lean4-info-buffer-refresh--continue))))
 
 (provide 'lean4-mode)
 ;;; lean4-mode.el ends here

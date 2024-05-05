@@ -286,6 +286,21 @@ PS is a list of tag IDs."
 
 (defun lean4-info-buffer-refresh ()
   "Refresh the *Lean Goal* buffer."
+  ;; `lean4--rpc-connect' sets the variable `lean4--rpc-*'.
+  ;; It might be more elegant to call it once, when we switch
+  ;; to a lean buffer, but putting it here seems more robust.
+  (lean4--rpc-connect)
+  ;; The server sends a `textDocument/publishDiagnostics'
+  ;; notification while handling a `$/lean/rpc/connect' request,
+  ;; so we cannot send a `$/lean/rpc/connect' while handling
+  ;; a `textDocument/publishDiagnostics' notification without
+  ;; causing an infinite loop.
+  ;; Therefore the main body of `lean4-info-buffer-refresh'
+  ;; (which is called on `textDocument/publishDiagnostics')
+  ;; is in a separate function, which we call now.
+  (lean4-info-buffer-refresh--continue))
+
+(defun lean4-info-buffer-refresh--continue ()
   (let* ((server (eglot-current-server))
          (buf (current-buffer))
          (goals :none)
@@ -305,7 +320,6 @@ PS is a list of tag IDs."
                 (setq lean4-info--term-goal term-goal)
                 (lean4-info-buffer-redisplay))))))
     (when (and server (lean4-info-buffer-active lean4-info-buffer-name))
-      (eglot--signal-textDocument/didChange)
       (if lean4-info-plain
           (progn
             (jsonrpc-async-request
@@ -318,10 +332,6 @@ PS is a list of tag IDs."
              :success-fn (lambda (result)
                            (setq term-goal (cl-getf result :goal))
                            (funcall handle-response))))
-        ;; It might be more elegant to do the following once, when we
-        ;; switch to a lean buffer, but putting it here seems more
-        ;; robust.
-        (lean4--rpc-connect) ;; sets the variables lean4--rpc-*
         (jsonrpc-async-request
          server :$/lean/rpc/call
          `(:method "Lean.Widget.getInteractiveGoals"
