@@ -320,6 +320,9 @@ PS is a list of tag IDs."
                 (setq lean4-info--term-goal term-goal)
                 (lean4-info-buffer-redisplay))))))
     (when (and server (lean4-info-buffer-active lean4-info-buffer-name))
+      (let ((textdoc-pos (eglot--TextDocumentPositionParams)))
+        (setq lean4--rpc-textDocument (plist-get textdoc-pos :textDocument))
+        (setq lean4--rpc-position (plist-get textdoc-pos :position)))
       (if lean4-info-plain
           (progn
             (jsonrpc-async-request
