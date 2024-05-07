@@ -135,6 +135,7 @@ The buffer is supposed to be the *Lean Goal* buffer."
   (let ((inhibit-message t)
         (inhibit-read-only t))
     (when (lean4-info-buffer-active lean4-info-buffer-name)
+      (flymake-start)
       (-let* ((deactivate-mark)         ; keep transient mark
               (line (save-restriction (widen) (1- (line-number-at-pos nil t))))
               (errors (lean4-info--diagnostics))
