@@ -225,7 +225,7 @@ Look up the directory hierarchy starting from FILE-NAME for the
 first member of `lean4-workspace-roots' or
 `lean4-workspace-exclusions'. If no such directory is found,
 search again and use the *last* directory containing a file
-\"lakefile.lean\". If the second search fails, or if the search
+\"lean-toolchain\". If the second search fails, or if the search
 encounters a member of `lean4-workspace-exclusions', do not start
 a language server instance."
   (when (or (bound-and-true-p eglot-lsp-context)
@@ -252,10 +252,10 @@ a language server instance."
                                    (funcall contains file-name excls))))))))
           (unless excluded
             (setq root dir))
-        ;; Configured directory not found. Now search for a lakefile.
-        (while-let ((dir (locate-dominating-file file-name "lakefile.lean")))
-          ;; We found a lakefile, but maybe it belongs to a package.
-          ;; Continue looking until there are no more lakefiles.
+        ;; Configured directory not found. Now search for a toolchain file.
+        (while-let ((dir (locate-dominating-file file-name "lean-toolchain")))
+          ;; We found a toolchain file, but maybe it belongs to a package.
+          ;; Continue looking until there are no more toolchain files.
           (setq root dir)
           (setq file-name (file-name-directory (directory-file-name dir)))))
       (if root
