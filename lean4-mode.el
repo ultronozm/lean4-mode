@@ -376,7 +376,8 @@ otherwise return '/path/to/lean --server'."
                                                 &key uri &allow-other-keys)
   "Handle notification textDocument/publishDiagnostics."
   (lean4-with-uri-buffers server uri
-    (lean4-info-buffer-redisplay)))
+    (lean4-info-buffer-redisplay)
+    (flymake-start)))
 
 (cl-defmethod eglot-register-capability ((_server lean4-eglot-lsp-server)
                                          (_method (eql workspace/didChangeWatchedFiles))
