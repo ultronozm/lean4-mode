@@ -309,7 +309,11 @@ Invokes `lean4-mode-hook'."
             (eglot-ensure)
             (add-hook 'before-save-hook #'lean4-whitespace-cleanup nil 'local)
             (add-hook 'eglot--document-changed-hook
-                      #'lean4-info-buffer-refresh 90 'local))))))
+                      #'lean4--document-changed 90 'local))))))
+
+(defvar lean4--document-changed-p nil)
+(defun lean4--document-changed ()
+  (setq lean4--document-changed-p t))
 
 (defun lean4--version ()
   "Return Lean version as a list `(MAJOR MINOR PATCH)'."
@@ -376,8 +380,11 @@ otherwise return '/path/to/lean --server'."
                                                 &key uri &allow-other-keys)
   "Handle notification textDocument/publishDiagnostics."
   (lean4-with-uri-buffers server uri
-    (lean4-info-buffer-redisplay)
-    (flymake-start)))
+    (if lean4--document-changed-p
+        (progn
+          (lean4-info-buffer-refresh))
+      (lean4-info-buffer-redisplay))
+    (setq lean4--document-changed-p nil)))
 
 (cl-defmethod eglot-register-capability ((_server lean4-eglot-lsp-server)
                                          (_method (eql workspace/didChangeWatchedFiles))

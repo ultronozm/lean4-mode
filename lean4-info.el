@@ -303,7 +303,8 @@ PS is a list of tag IDs."
               (with-current-buffer buf
                 (setq lean4-info--goals goals)
                 (setq lean4-info--term-goal term-goal)
-                (lean4-info-buffer-redisplay))))))
+                (lean4-info-buffer-redisplay)
+                (flymake-start))))))
     (when (and server (lean4-info-buffer-active lean4-info-buffer-name))
       (if lean4-info-plain
           (progn
