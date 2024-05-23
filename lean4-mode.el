@@ -307,13 +307,7 @@ Invokes `lean4-mode-hook'."
       (if (lean4-project-find buffer-file-truename)
           (progn
             (eglot-ensure)
-            (add-hook 'before-save-hook #'lean4-whitespace-cleanup nil 'local)
-            (add-hook 'eglot--document-changed-hook
-                      #'lean4--document-changed 90 'local))))))
-
-(defvar lean4--document-changed-p nil)
-(defun lean4--document-changed ()
-  (setq lean4--document-changed-p t))
+            (add-hook 'before-save-hook #'lean4-whitespace-cleanup nil 'local))))))
 
 (defun lean4--version ()
   "Return Lean version as a list `(MAJOR MINOR PATCH)'."
@@ -375,16 +369,23 @@ otherwise return '/path/to/lean --server'."
   (eglot--dbind ((VersionedTextDocumentIdentifier) uri) textDocument
     (lean4-fringe-update server processing uri)))
 
+;; We call `lean4-info-buffer-refresh' and `flymake-start' from a timer
+;; to reduce nesting of synchronous json requests, with a (short) nonzero
+;; delay in case the server sends diagnostics excessively frequently.
+(defvar lean4--diagnostics-pending nil)
+(defun lean4--handle-diagnostics (server uri)
+  (setq lean4--diagnostics-pending nil)
+  (lean4-with-uri-buffers server uri
+    (lean4-info-buffer-refresh)
+    (flymake-start)))
+
 (cl-defmethod eglot-handle-notification :after ((server lean4-eglot-lsp-server)
                                                 (_method (eql textDocument/publishDiagnostics))
                                                 &key uri &allow-other-keys)
   "Handle notification textDocument/publishDiagnostics."
-  (lean4-with-uri-buffers server uri
-    (if lean4--document-changed-p
-        (progn
-          (lean4-info-buffer-refresh))
-      (lean4-info-buffer-redisplay))
-    (setq lean4--document-changed-p nil)))
+  (unless lean4--diagnostics-pending
+    (setq lean4--diagnostics-pending t)
+    (run-with-timer 0.05 nil #'lean4--handle-diagnostics server uri)))
 
 (cl-defmethod eglot-register-capability ((_server lean4-eglot-lsp-server)
                                          (_method (eql workspace/didChangeWatchedFiles))
