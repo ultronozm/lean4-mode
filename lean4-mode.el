@@ -131,21 +131,6 @@ tab completion (if configured)."
           ((< cur-column cur-indent)
            (move-to-column cur-indent)))))
 
-(defun lean4-set-keys ()
-  "Setup Lean 4 keybindings."
-  (local-set-key lean4-keybinding-std-exe1                  #'lean4-std-exe)
-  (local-set-key lean4-keybinding-std-exe2                  #'lean4-std-exe)
-  (local-set-key lean4-keybinding-show-key                  #'quail-show-key)
-  ;; (local-set-key lean4-keybinding-hole                      #'lean4-hole)
-  (local-set-key lean4-keybinding-lean4-toggle-info         #'lean4-toggle-info)
-  ;; (local-set-key lean4-keybinding-lean4-message-boxes-toggle #'lean4-message-boxes-toggle)
-  (local-set-key lean4-keybinding-lake-build                #'lean4-lake-build)
-  (local-set-key lean4-keybinding-refresh-file-dependencies #'lean4-refresh-file-dependencies)
-  ;; This only works as a mouse binding due to the event, so it is not abstracted
-  ;; to avoid user confusion.
-  ;; (local-set-key (kbd "<mouse-3>")                         #'lean4-right-click-show-menu)
-  )
-
 (define-abbrev-table 'lean4-abbrev-table
   '())
 
@@ -301,7 +286,7 @@ Invokes `lean4-mode-hook'."
   ;; Let the `next-error' and `previous-error' commands navigate
   ;; diagnostics.
   (setq-local next-error-function 'flymake-goto-next-error)
-  (lean4-set-keys)
+
   (if (fboundp 'electric-indent-local-mode)
       (electric-indent-local-mode -1))
   ;; (abbrev-mode 1)
