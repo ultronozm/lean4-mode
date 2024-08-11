@@ -157,9 +157,10 @@ tab completion (if configured)."
   `("Lean 4"
     ["Execute lean"         lean4-execute                      t]
     ["Toggle info display"  lean4-toggle-info                  t]
-    ["List of errors"       flycheck-list-errors               flycheck-mode]
+    ["List of errors"       flymake-show-buffer-diagnostics flymake-mode]
     ["Restart lean process" eglot-reconnect                    t]
-    ["Customize lean4-mode" (customize-group 'lean)            t]))
+    ["Customize lean4-mode" (customize-group 'lean)            t]
+    ["Show keystroke for symbol" quail-show-key            t]))
 
 (defvar lean4-idle-hook nil
   "Functions to run after Emacs has idled.
