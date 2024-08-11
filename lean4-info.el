@@ -76,11 +76,20 @@ The buffer is supposed to be the *Lean Goal* buffer."
     (lean4-ensure-info-buffer buffer)
     (display-buffer buffer)))
 
+(defcustom lean4-info-refresh-even-if-invisible nil
+  "If non-nil, refresh the info buffer even if it is not visible."
+  :type 'boolean
+  :group 'lean4-info)
+
 (defun lean4-info-buffer-active (buffer)
   "Check whether the given info BUFFER should show info for the current buffer."
   (and
-   ;; info buffer visible (on any frame)
-   (get-buffer-window buffer t)
+   (if lean4-info-refresh-even-if-invisible
+       ;; info buffer exists
+       (get-buffer-window buffer)
+     ;; info buffer visible (on any frame)
+     (get-buffer-window buffer t))
+   (get-buffer buffer)
    ;; current window of current buffer is selected (i.e., in focus)
    (eq (current-buffer) (window-buffer))
    ;; current buffer is visiting a file
