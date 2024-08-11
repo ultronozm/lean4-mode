@@ -52,6 +52,8 @@ This mode is only used in temporary buffers, for fontification."
   :group 'lean
   (set (make-local-variable 'font-lock-defaults) lean4-info-font-lock-defaults))
 
+(declare-function lean4--idle-invalidate "lean4-mode")
+
 (defun lean4-ensure-info-buffer (buffer)
   "Create BUFFER if it does not exist.
 Also choose settings used for the *Lean Goal* buffer."
@@ -312,7 +314,6 @@ PS is a list of tag IDs."
                 (setq lean4-info--term-goal term-goal)
                 (lean4-info-buffer-redisplay))))))
     (when (and server (lean4-info-buffer-active lean4-info-buffer-name))
-      (eglot--signal-textDocument/didChange)
       (if lean4-info-plain
           (progn
             (jsonrpc-async-request

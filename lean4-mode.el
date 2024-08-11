@@ -169,7 +169,6 @@ run only once for each time Emacs becomes idle.")
 
 (defvar lean4--idle-timer nil)
 (defvar lean4--idle-buffer nil)
-(defvar lean4--idle-point nil)
 (defvar lean4--idle-tick nil)
 
 (defun lean4--idle-invalidate ()
@@ -179,13 +178,17 @@ run only once for each time Emacs becomes idle.")
 (defun lean4--idle-function ()
   "Run `lean4-idle-hook' (unless it's already been run)."
   (when (eq major-mode 'lean4-mode)
-    (unless (and (eq lean4--idle-buffer (current-buffer))
-                 (eq lean4--idle-point (point))
-                 (eq lean4--idle-tick (buffer-modified-tick)))
+    (let ((old-buffer lean4--idle-buffer)
+          (old-tick lean4--idle-tick))
       (setq lean4--idle-buffer (current-buffer))
-      (setq lean4--idle-point (point))
       (setq lean4--idle-tick (buffer-modified-tick))
-      (run-hooks 'lean4-idle-hook))))
+      ;; If the user has switched buffer or the buffer is not modified,
+      ;; refresh the info buffer now. Otherwise (if the buffer is modified),
+      ;; do nothing: we will refresh the info buffer later, from Eglot's
+      ;; internal `eglot--document-changed-hook'.
+      (when (or (not (eq lean4--idle-buffer old-buffer))
+                (eq lean4--idle-tick old-tick))
+        (lean4-info-buffer-refresh)))))
 
 (defun lean4--start-idle-timer ()
   (unless lean4--idle-timer
@@ -198,18 +201,6 @@ run only once for each time Emacs becomes idle.")
     (setq lean4--idle-timer nil)))
 
 (lean4--start-idle-timer)
-
-(defconst lean4-hooks-alist
-  '(
-    ;; Handle events that may start automatic syntax checks
-    (before-save-hook . lean4-whitespace-cleanup)
-    ;; info view
-    (lean4-idle-hook . lean4-info-buffer-refresh))
-  "Hooks which lean4-mode needs to hook in.
-
-The `car' of each pair is a hook variable, the `cdr' a function
-to be added or removed from the hook variable if Flycheck mode is
-enabled and disabled respectively.")
 
 (cl-defmethod project-root ((project (head lake)))
   "A pair ('lake . DIR) is a Lean 4 project whose root directory is DIR.
@@ -237,7 +228,7 @@ Look up the directory hierarchy starting from FILE-NAME for the
 first member of `lean4-workspace-roots' or
 `lean4-workspace-exclusions'. If no such directory is found,
 search again and use the *last* directory containing a file
-\"lakefile.lean\". If the second search fails, or if the search
+\"lean-toolchain\". If the second search fails, or if the search
 encounters a member of `lean4-workspace-exclusions', do not start
 a language server instance."
   (when (or (bound-and-true-p eglot-lsp-context)
@@ -264,10 +255,10 @@ a language server instance."
                                    (funcall contains file-name excls))))))))
           (unless excluded
             (setq root dir))
-        ;; Configured directory not found. Now search for a lakefile.
-        (while-let ((dir (locate-dominating-file file-name "lakefile.lean")))
-          ;; We found a lakefile, but maybe it belongs to a package.
-          ;; Continue looking until there are no more lakefiles.
+        ;; Configured directory not found. Now search for a toolchain file.
+        (while-let ((dir (locate-dominating-file file-name "lean-toolchain")))
+          ;; We found a toolchain file, but maybe it belongs to a package.
+          ;; Continue looking until there are no more toolchain files.
           (setq root dir)
           (setq file-name (file-name-directory (directory-file-name dir)))))
       (if root
@@ -276,7 +267,8 @@ a language server instance."
           (message
            "File does not belong to a workspace and no lakefile found. \
 Customize the variables `lean4-workspace-roots' and \
-`lean4-workspace-exclusions' to define workspaces."))))))
+`lean4-workspace-exclusions' to define workspaces.")
+          nil)))))
 
 (push #'lean4-project-find project-find-functions)
 
@@ -318,8 +310,7 @@ Invokes `lean4-mode-hook'."
       (if (lean4-project-find buffer-file-truename)
           (progn
             (eglot-ensure)
-            (pcase-dolist (`(,hook . ,fn) lean4-hooks-alist)
-              (add-hook hook fn nil 'local)))))))
+            (add-hook 'before-save-hook #'lean4-whitespace-cleanup nil 'local))))))
 
 (defun lean4--version ()
   "Return Lean version as a list `(MAJOR MINOR PATCH)'."
@@ -381,13 +372,23 @@ otherwise return '/path/to/lean --server'."
   (eglot--dbind ((VersionedTextDocumentIdentifier) uri) textDocument
     (lean4-fringe-update server processing uri)))
 
+;; We call `lean4-info-buffer-refresh' and `flymake-start' from a timer
+;; to reduce nesting of synchronous json requests, with a (short) nonzero
+;; delay in case the server sends diagnostics excessively frequently.
+(defvar lean4--diagnostics-pending nil)
+(defun lean4--handle-diagnostics (server uri)
+  (setq lean4--diagnostics-pending nil)
+  (lean4-with-uri-buffers server uri
+    (lean4-info-buffer-refresh)
+    (flymake-start)))
+
 (cl-defmethod eglot-handle-notification :after ((server lean4-eglot-lsp-server)
                                                 (_method (eql textDocument/publishDiagnostics))
                                                 &key uri &allow-other-keys)
   "Handle notification textDocument/publishDiagnostics."
-  (lean4-with-uri-buffers server uri
-    (lean4-info-buffer-redisplay)
-    (flymake-start)))
+  (unless lean4--diagnostics-pending
+    (setq lean4--diagnostics-pending t)
+    (run-with-timer 0.05 nil #'lean4--handle-diagnostics server uri)))
 
 (cl-defmethod eglot-register-capability ((_server lean4-eglot-lsp-server)
                                          (_method (eql workspace/didChangeWatchedFiles))
