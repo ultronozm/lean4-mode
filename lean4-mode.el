@@ -162,8 +162,9 @@ tab completion (if configured)."
     ["Customize lean4-mode" (customize-group 'lean)            t]))
 
 (defvar lean4-idle-hook nil
-  "Functions to run after Emacs has been idle for `lean4-idle-delay' seconds.
-The functions are run only once for each time Emacs becomes idle.")
+  "Functions to run after Emacs has idled.
+The idle delay is `lean4-idle-delay' seconds.  The functions are
+run only once for each time Emacs becomes idle.")
 
 (defvar lean4--idle-timer nil)
 (defvar lean4--idle-buffer nil)
@@ -171,10 +172,11 @@ The functions are run only once for each time Emacs becomes idle.")
 (defvar lean4--idle-tick nil)
 
 (defun lean4--idle-invalidate ()
-  "Cause lean4--idle-function to act as if something has changed when next run."
+  "Cause lean4--idle-function to run the next time it can."
   (setq lean4--idle-buffer nil))
 
 (defun lean4--idle-function ()
+  "Run `lean4-idle-hook' (unless it's already been run)."
   (when (eq major-mode 'lean4-mode)
     (unless (and (eq lean4--idle-buffer (current-buffer))
                  (eq lean4--idle-point (point))
