@@ -173,7 +173,9 @@ run only once for each time Emacs becomes idle.")
       ;; internal `eglot--document-changed-hook'.
       (when (or (not (eq lean4--idle-buffer old-buffer))
                 (eq lean4--idle-tick old-tick))
-        (lean4-info-buffer-refresh)))))
+        (lean4-info-buffer-refresh)
+        ;; Run the lean4-idle-hook
+        (run-hooks 'lean4-idle-hook)))))
 
 (defun lean4--start-idle-timer ()
   (unless lean4--idle-timer
