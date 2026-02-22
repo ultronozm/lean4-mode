@@ -83,8 +83,13 @@ This yields the setup:
 | <kbd>C-c C-d</kbd> | restart Lean server for current file |
 | <kbd>C-c C-i</kbd> | toggle goal/messages buffer          |
 
-Diagnostics are provided via Flymake (through Eglot). Use `next-error` / `previous-error`
-(e.g. <kbd>M-g n</kbd> / <kbd>M-g p</kbd>) to navigate them.
+Diagnostics are provided via Flymake (through Eglot). For diagnostics navigation,
+bind <kbd>M-n</kbd> / <kbd>M-p</kbd> directly in `flymake-mode-map`:
+```elisp
+(with-eval-after-load 'flymake
+  (keymap-set flymake-mode-map "M-n" #'flymake-goto-next-error)
+  (keymap-set flymake-mode-map "M-p" #'flymake-goto-prev-error))
+```
 
 Compiling
 =========
