@@ -61,6 +61,12 @@ right mode when visiting a file.  If elan has a default Lean version, Lean files
 outside a project will default to that mode."
   :type 'boolean)
 
+(defcustom lean4-auto-start-eglot t
+  "Automatically start Eglot when entering `lean4-mode'.
+If nil, Eglot is not started automatically; use `eglot' or `eglot-ensure'
+to start it manually."
+  :type 'boolean)
+
 (defcustom lean4-idle-delay 0.3
   "Interval for `lean4-idle-hook` functions."
   :type 'number)

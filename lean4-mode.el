@@ -251,7 +251,8 @@ Invokes `lean4-mode-hook'."
     (let ((lean4--workspace-message-enabled t))
       (if (lean4-project-find buffer-file-truename)
           (progn
-            (eglot-ensure)
+            (when lean4-auto-start-eglot
+              (eglot-ensure))
             (add-hook 'before-save-hook #'lean4-whitespace-cleanup nil 'local))))))
 
 (defun lean4--version ()
