@@ -309,21 +309,24 @@ PS is a list of tag IDs."
 
 (defun lean4-info-buffer-refresh ()
   "Refresh the *Lean Goal* buffer."
-  (let* ((server (eglot-current-server))
-         (buf (current-buffer))
-         (goals :none)
-         (term-goal :none)
-         (handle-response
-          (lambda ()
-            (when (and (not (eq goals :none))
-                       (not (eq term-goal :none))
-                       (buffer-live-p buf))
-              (with-current-buffer buf
-                (setq lean4-info--goals goals)
-                (setq lean4-info--term-goal term-goal)
-                (lean4-info-buffer-redisplay))))))
-    (when (and server (lean4-info-buffer-active lean4-info-buffer-name))
-      (if lean4-info-plain
+  ;; Important for TRAMP responsiveness: avoid calling `eglot-current-server'
+  ;; unless the info buffer is actually active.
+  (when (lean4-info-buffer-active lean4-info-buffer-name)
+    (let* ((server (eglot-current-server))
+           (buf (current-buffer))
+           (goals :none)
+           (term-goal :none)
+           (handle-response
+            (lambda ()
+              (when (and (not (eq goals :none))
+                         (not (eq term-goal :none))
+                         (buffer-live-p buf))
+                (with-current-buffer buf
+                  (setq lean4-info--goals goals)
+                  (setq lean4-info--term-goal term-goal)
+                  (lean4-info-buffer-redisplay))))))
+      (when server
+        (if lean4-info-plain
           (progn
             (jsonrpc-async-request
              server :$/lean/plainGoal (eglot--TextDocumentPositionParams)
@@ -366,7 +369,7 @@ PS is a list of tag IDs."
          :success-fn
          (lambda (result)
            (setq term-goal (when result (lean4-info-parse-goal result)))
-           (funcall handle-response)))))))
+           (funcall handle-response))))))))
 
 (defun lean4-toggle-info ()
   "Show infos at the current point."
