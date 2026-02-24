@@ -78,9 +78,11 @@ Counts from the beginning of the line."
                ;; Keep the hot notification path URI-based to avoid TRAMP
                ;; round-trips from `file-equal-p'/`file-truename'.
                (unless ,buf-uri-var
-                 (when (and buffer-file-name
-                            (not (file-remote-p buffer-file-name)))
-                   (setq ,buf-uri-var (eglot-path-to-uri buffer-file-name))))
+                 (when buffer-file-name
+                   ;; `:truenamep t' keeps this fallback string-based for
+                   ;; TRAMP paths and avoids synchronous remote stat calls.
+                   (setq ,buf-uri-var (eglot-path-to-uri buffer-file-name
+                                                         :truenamep t))))
                (when (and ,buf-uri-var
                           (equal ,buf-uri-var ,uri-var))
                  ,@body))))))))
