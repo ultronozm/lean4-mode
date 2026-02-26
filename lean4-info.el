@@ -101,6 +101,9 @@ The buffer is supposed to be the *Lean Goal* buffer."
 (defvar lean4-info--goals nil)
 (defvar lean4-info--term-goal nil)
 
+(defvar-local lean4-info--refresh-generation 0
+  "Monotonic counter for asynchronous info-buffer refresh requests.")
+
 (defun lean4-info--diagnostics ()
   (nreverse
    (cl-loop for diag in (flymake-diagnostics)
@@ -309,64 +312,92 @@ PS is a list of tag IDs."
 
 (defun lean4-info-buffer-refresh ()
   "Refresh the *Lean Goal* buffer."
-  (let* ((server (eglot-current-server))
-         (buf (current-buffer))
-         (goals :none)
-         (term-goal :none)
-         (handle-response
-          (lambda ()
-            (when (and (not (eq goals :none))
-                       (not (eq term-goal :none))
-                       (buffer-live-p buf))
-              (with-current-buffer buf
-                (setq lean4-info--goals goals)
-                (setq lean4-info--term-goal term-goal)
-                (lean4-info-buffer-redisplay))))))
-    (when (and server (lean4-info-buffer-active lean4-info-buffer-name))
-      (if lean4-info-plain
-          (progn
-            (jsonrpc-async-request
-             server :$/lean/plainGoal (eglot--TextDocumentPositionParams)
-             :success-fn (lambda (result)
-                           (setq goals (cl-getf result :goals))
-                           (funcall handle-response)))
-            (jsonrpc-async-request
-             server :$/lean/plainTermGoal (eglot--TextDocumentPositionParams)
-             :success-fn (lambda (result)
-                           (setq term-goal (cl-getf result :goal))
-                           (funcall handle-response))))
-        ;; It might be more elegant to do the following once, when we
-        ;; switch to a lean buffer, but putting it here seems more
-        ;; robust.
-        (lean4--rpc-connect) ;; sets the variables lean4--rpc-*
-        (jsonrpc-async-request
-         server :$/lean/rpc/call
-         `(:method "Lean.Widget.getInteractiveGoals"
-                   :sessionId ,lean4--rpc-sessionId
-                   :textDocument ,lean4--rpc-textDocument
-                   :position ,lean4--rpc-position
-                   :params (:textDocument ,lean4--rpc-textDocument
-                                          :position ,lean4--rpc-position
-                                          ))
-         :success-fn
-         (lambda (result)
-           (setq goals (when result
-                         (vconcat (mapcar #'lean4-info-parse-goal
-                                          (cl-getf result :goals)))))
-           (funcall handle-response)))
-        (jsonrpc-async-request
-         server :$/lean/rpc/call
-         `(:method "Lean.Widget.getInteractiveTermGoal"
-                   :sessionId ,lean4--rpc-sessionId
-                   :textDocument ,lean4--rpc-textDocument
-                   :position ,lean4--rpc-position
-                   :params (:textDocument ,lean4--rpc-textDocument
-                                          :position ,lean4--rpc-position
-                                          ))
-         :success-fn
-         (lambda (result)
-           (setq term-goal (when result (lean4-info-parse-goal result)))
-           (funcall handle-response)))))))
+  ;; Important for TRAMP responsiveness: avoid calling `eglot-current-server'
+  ;; unless the info buffer is actually active.
+  (when (lean4-info-buffer-active lean4-info-buffer-name)
+    (let* ((server (eglot-current-server))
+           (buf (current-buffer))
+           (generation (cl-incf lean4-info--refresh-generation))
+           (goals :pending)
+           (term-goal :pending)
+           (old-goals lean4-info--goals)
+           (old-term-goal lean4-info--term-goal)
+           (commit
+            (lambda ()
+              (when (and (not (eq goals :pending))
+                         (not (eq term-goal :pending))
+                         (buffer-live-p buf))
+                (with-current-buffer buf
+                  (when (eql generation lean4-info--refresh-generation)
+                    (setq lean4-info--goals goals)
+                    (setq lean4-info--term-goal term-goal)
+                    (lean4-info-buffer-redisplay))))))
+           (store-goals
+            (lambda (value)
+              (setq goals value)
+              (funcall commit)))
+           (store-term-goal
+            (lambda (value)
+              (setq term-goal value)
+              (funcall commit))))
+      (when server
+        (if lean4-info-plain
+            (progn
+              (jsonrpc-async-request
+               server :$/lean/plainGoal (eglot--TextDocumentPositionParams)
+               :success-fn (lambda (result)
+                             (funcall store-goals (cl-getf result :goals)))
+               :error-fn (lambda (&rest _)
+                           (funcall store-goals old-goals)))
+              (jsonrpc-async-request
+               server :$/lean/plainTermGoal (eglot--TextDocumentPositionParams)
+               :success-fn (lambda (result)
+                             (funcall store-term-goal (cl-getf result :goal)))
+               :error-fn (lambda (&rest _)
+                           (funcall store-term-goal old-term-goal))))
+          ;; It might be more elegant to do the following once, when we
+          ;; switch to a lean buffer, but putting it here seems more
+          ;; robust.
+          (condition-case nil
+              (progn
+                (lean4--rpc-connect) ;; sets the variables lean4--rpc-*
+                (jsonrpc-async-request
+                 server :$/lean/rpc/call
+                 `(:method "Lean.Widget.getInteractiveGoals"
+                           :sessionId ,lean4--rpc-sessionId
+                           :textDocument ,lean4--rpc-textDocument
+                           :position ,lean4--rpc-position
+                           :params (:textDocument ,lean4--rpc-textDocument
+                                                  :position ,lean4--rpc-position
+                                                  ))
+                 :success-fn
+                 (lambda (result)
+                   (funcall store-goals
+                            (when result
+                              (vconcat (mapcar #'lean4-info-parse-goal
+                                               (cl-getf result :goals))))))
+                 :error-fn
+                 (lambda (&rest _)
+                   (funcall store-goals old-goals)))
+                (jsonrpc-async-request
+                 server :$/lean/rpc/call
+                 `(:method "Lean.Widget.getInteractiveTermGoal"
+                           :sessionId ,lean4--rpc-sessionId
+                           :textDocument ,lean4--rpc-textDocument
+                           :position ,lean4--rpc-position
+                           :params (:textDocument ,lean4--rpc-textDocument
+                                                  :position ,lean4--rpc-position
+                                                  ))
+                 :success-fn
+                 (lambda (result)
+                   (funcall store-term-goal
+                            (when result (lean4-info-parse-goal result))))
+                 :error-fn
+                 (lambda (&rest _)
+                   (funcall store-term-goal old-term-goal))))
+            (error
+             (funcall store-goals old-goals)
+             (funcall store-term-goal old-term-goal))))))))
 
 (defun lean4-toggle-info ()
   "Show infos at the current point."
