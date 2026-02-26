@@ -53,6 +53,16 @@ using `font-lock-comment-face' instead of the `✝` suffix used by Lean."
   "Highlight file progress in the current buffer."
   :type 'boolean)
 
+(defcustom lean4-debug-uri-matching nil
+  "If non-nil, log when no managed buffer matches a notification URI.
+This controls URI-mismatch diagnostics in `lean4-with-uri-buffers'."
+  :type 'boolean)
+
+(defcustom lean4-debug-uri-matching-max-logs 300
+  "Maximum number of URI-mismatch diagnostics to emit.
+Use `lean4-uri-match-debug-reset' to clear the counter and seen cache."
+  :type 'integer)
+
 
 (defcustom lean4-autodetect-lean3 nil
   "Autodetect Lean version.
