@@ -175,8 +175,9 @@ search again and use the *last* directory containing a file
 \"lean-toolchain\". If the second search fails, or if the search
 encounters a member of `lean4-workspace-exclusions', do not start
 a language server instance."
-  (when (or (bound-and-true-p eglot-lsp-context)
-            lean4--workspace-message-enabled)
+  (when (and (stringp file-name)
+             (or (bound-and-true-p eglot-lsp-context)
+                 lean4--workspace-message-enabled))
     (let* ((normalize (lambda (dir) (abbreviate-file-name (file-truename dir))))
            (roots (mapcar normalize lean4-workspace-roots))
            (excls (mapcar normalize lean4-workspace-exclusions))
@@ -198,7 +199,8 @@ a language server instance."
             (unless excluded
               (setq root dir))
           ;; Configured directory not found. Now search for a toolchain file.
-          (while-let ((dir (locate-dominating-file file-name "lean-toolchain")))
+          (while-let ((dir (and (stringp file-name)
+                                (locate-dominating-file file-name "lean-toolchain"))))
             ;; We found a toolchain file, but maybe it belongs to a package.
             ;; Continue looking until there are no more toolchain files.
             (setq root dir)
