@@ -62,16 +62,30 @@ Counts from the beginning of the line."
 (defmacro lean4-with-uri-buffers (server uri &rest body)
   (declare (indent 2)
            (debug (form form &rest form)))
-  (let ((path-var (make-symbol "path")))
-    `(let ((,path-var (eglot-uri-to-path ,uri)))
+  (let ((uri-var (make-symbol "uri"))
+        (cache-var (make-symbol "cache"))
+        (buf-uri-var (make-symbol "buf-uri")))
+    `(let ((,uri-var ,uri))
+       (when (keywordp ,uri-var)
+         (setq ,uri-var (substring (symbol-name ,uri-var) 1)))
        (dolist (buf (eglot--managed-buffers ,server))
          (when (buffer-live-p buf)
            (with-current-buffer buf
-             (when (and buffer-file-name
-                        (or (ignore-errors (file-equal-p buffer-file-name ,path-var))
-                            (string= (expand-file-name buffer-file-name)
-                                     (expand-file-name ,path-var))))
-               ,@body)))))))
+             (let* ((,cache-var (and (boundp 'eglot--TextDocumentIdentifier-cache)
+                                     eglot--TextDocumentIdentifier-cache))
+                    (,buf-uri-var (and (consp ,cache-var)
+                                       (plist-get (cdr ,cache-var) :uri))))
+               ;; Keep the hot notification path URI-based to avoid TRAMP
+               ;; round-trips from `file-equal-p'/`file-truename'.
+               (unless ,buf-uri-var
+                 (when buffer-file-name
+                   ;; `:truenamep t' keeps this fallback string-based for
+                   ;; TRAMP paths and avoids synchronous remote stat calls.
+                   (setq ,buf-uri-var (eglot-path-to-uri buffer-file-name
+                                                         :truenamep t))))
+               (when (and ,buf-uri-var
+                          (equal ,buf-uri-var ,uri-var))
+                 ,@body))))))))
 
 (provide 'lean4-util)
 ;;; lean4-util.el ends here
