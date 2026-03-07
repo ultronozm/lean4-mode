@@ -62,15 +62,15 @@ Counts from the beginning of the line."
 (defmacro lean4-with-uri-buffers (server uri &rest body)
   (declare (indent 2)
            (debug (form form &rest form)))
-  (let ((path-var (make-symbol "path")))
-    `(let ((,path-var (eglot-uri-to-path ,uri)))
+  (let ((uri-var (make-symbol "uri")))
+    `(let ((,uri-var ,uri))
        (dolist (buf (eglot--managed-buffers ,server))
          (when (buffer-live-p buf)
            (with-current-buffer buf
-             (when (and buffer-file-name
-                        (or (ignore-errors (file-equal-p buffer-file-name ,path-var))
-                            (string= (expand-file-name buffer-file-name)
-                                     (expand-file-name ,path-var))))
+             (when-let* ((cache (and (boundp 'eglot--TextDocumentIdentifier-cache)
+                                     eglot--TextDocumentIdentifier-cache))
+                         (buf-uri (plist-get (cdr cache) :uri))
+                         ((equal buf-uri ,uri-var)))
                ,@body)))))))
 
 (provide 'lean4-util)
