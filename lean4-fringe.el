@@ -84,18 +84,20 @@
 (defvar-local lean4-fringe-delay-timer nil)
 
 (defun lean4-fringe-update (server processing uri)
-  (lean4-with-uri-buffers server uri
-    (setq lean4-fringe-data processing)
-    (unless (and lean4-fringe-delay-timer
-                 (memq lean4-fringe-delay-timer timer-list))
-      (setq lean4-fringe-delay-timer
-            (run-at-time 0.3 nil
-                         (lambda (buf)
-                           (when (buffer-live-p buf)
-                             (with-current-buffer buf
-                               (lean4-fringe-update-progress-overlays)
-                               (setq lean4-fringe-delay-timer nil))))
-                         (current-buffer))))))
+  (lean4--uri-matching-buffers
+   server uri
+   (lambda ()
+     (setq lean4-fringe-data processing)
+     (unless (and lean4-fringe-delay-timer
+                  (memq lean4-fringe-delay-timer timer-list))
+       (setq lean4-fringe-delay-timer
+             (run-at-time 0.3 nil
+                          (lambda (buf)
+                            (when (buffer-live-p buf)
+                              (with-current-buffer buf
+                                (lean4-fringe-update-progress-overlays)
+                                (setq lean4-fringe-delay-timer nil))))
+                          (current-buffer)))))))
 
 (provide 'lean4-fringe)
 ;;; lean4-fringe.el ends here

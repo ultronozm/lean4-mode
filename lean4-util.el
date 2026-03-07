@@ -29,6 +29,9 @@
 (require 'cl-lib)
 (require 'lean4-settings)
 
+(declare-function eglot--managed-buffers "eglot" (server))
+(declare-function eglot-path-to-uri "eglot" (path &key truenamep))
+
 (defun lean4-line-offset (&optional pos)
   "Return the byte-offset of POS or current position.
 Counts from the beginning of the line."
@@ -82,61 +85,55 @@ FORMAT-STRING and ARGS are passed to `message'."
     (setq lean4--uri-match-debug-count (1+ lean4--uri-match-debug-count))
     (apply #'message (concat "[lean4-uri] " format-string) args)))
 
+(defun lean4--uri-matching-buffers (server uri fn)
+  "Call FN in each managed buffer matching URI for SERVER.
+Keep matching purely string-based to avoid synchronous TRAMP file probes."
+  (when (keywordp uri)
+    (setq uri (substring (symbol-name uri) 1)))
+  (let ((matched nil)
+        (sample nil)
+        (sample-count 0))
+    (dolist (buf (eglot--managed-buffers server))
+      (when (buffer-live-p buf)
+        (with-current-buffer buf
+          (let* ((cache (and (boundp 'eglot--TextDocumentIdentifier-cache)
+                             eglot--TextDocumentIdentifier-cache))
+                 (cache-hit (consp cache))
+                 (buf-uri (and cache-hit
+                               (plist-get (cdr cache) :uri))))
+            ;; Keep the hot notification path URI-based to avoid TRAMP
+            ;; round-trips from `file-equal-p'/`file-truename'.
+            (unless buf-uri
+              (when buffer-file-name
+                ;; `:truenamep t' keeps this fallback string-based for
+                ;; TRAMP paths and avoids synchronous remote stat calls.
+                (setq buf-uri (eglot-path-to-uri buffer-file-name
+                                                 :truenamep t))))
+            (when (and lean4-debug-uri-matching
+                       (< sample-count 3))
+              (push (format "%s[%s]:%s"
+                            (buffer-name buf)
+                            (if cache-hit "cache" "fallback")
+                            (or buf-uri "<nil>"))
+                    sample)
+              (setq sample-count (1+ sample-count)))
+            (when (and buf-uri
+                       (equal buf-uri uri))
+              (setq matched t)
+              (funcall fn))))))
+    (unless matched
+      (lean4--uri-match-debug-log-once
+       (list :no-match uri)
+       "no match for uri=%s samples=%s"
+       uri
+       (if sample
+           (mapconcat #'identity (nreverse sample) " | ")
+         "<none>")))))
+
 (defmacro lean4-with-uri-buffers (server uri &rest body)
   (declare (indent 2)
            (debug (form form &rest form)))
-  (let ((uri-var (make-symbol "uri"))
-        (matched-var (make-symbol "matched"))
-        (sample-var (make-symbol "sample"))
-        (sample-count-var (make-symbol "sample-count"))
-        (cache-var (make-symbol "cache"))
-        (cache-hit-var (make-symbol "cache-hit"))
-        (buf-uri-var (make-symbol "buf-uri"))
-        (source-var (make-symbol "source")))
-    `(let ((,uri-var ,uri)
-           (,matched-var nil)
-           (,sample-var nil)
-           (,sample-count-var 0))
-       (when (keywordp ,uri-var)
-         (setq ,uri-var (substring (symbol-name ,uri-var) 1)))
-       (dolist (buf (eglot--managed-buffers ,server))
-         (when (buffer-live-p buf)
-           (with-current-buffer buf
-             (let* ((,cache-var (and (boundp 'eglot--TextDocumentIdentifier-cache)
-                                     eglot--TextDocumentIdentifier-cache))
-                    (,cache-hit-var (consp ,cache-var))
-                    (,buf-uri-var (and ,cache-hit-var
-                                       (plist-get (cdr ,cache-var) :uri)))
-                    (,source-var "cache"))
-               ;; Keep the hot notification path URI-based to avoid TRAMP
-               ;; round-trips from `file-equal-p'/`file-truename'.
-               (unless ,buf-uri-var
-                 (setq ,source-var "fallback")
-                 (when buffer-file-name
-                   ;; `:truenamep t' keeps this fallback string-based for
-                   ;; TRAMP paths and avoids synchronous remote stat calls.
-                   (setq ,buf-uri-var (eglot-path-to-uri buffer-file-name
-                                                         :truenamep t))))
-               (when (and lean4-debug-uri-matching
-                          (< ,sample-count-var 3))
-                 (push (format "%s[%s]:%s"
-                               (buffer-name buf)
-                               (if ,cache-hit-var "cache" "fallback")
-                               (or ,buf-uri-var "<nil>"))
-                       ,sample-var)
-                 (setq ,sample-count-var (1+ ,sample-count-var)))
-               (when (and ,buf-uri-var
-                          (equal ,buf-uri-var ,uri-var))
-                 (setq ,matched-var t)
-                 ,@body)))))
-       (unless ,matched-var
-         (lean4--uri-match-debug-log-once
-          (list :no-match ,uri-var)
-          "no match for uri=%s samples=%s"
-          ,uri-var
-          (if ,sample-var
-              (mapconcat #'identity (nreverse ,sample-var) " | ")
-            "<none>"))))))
+  `(lean4--uri-matching-buffers ,server ,uri (lambda () ,@body)))
 
 (provide 'lean4-util)
 ;;; lean4-util.el ends here

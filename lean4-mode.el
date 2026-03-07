@@ -313,9 +313,11 @@ Invokes `lean4-mode-hook'."
       ;; Wait another moment, jsonrpc is anxious
       (run-with-timer 0.05 nil #'lean4--handle-diagnostics server uri)
     (setq lean4--diagnostics-pending nil)
-    (lean4-with-uri-buffers server uri
-      (lean4-info-buffer-refresh)
-      (flymake-start))))
+    (lean4--uri-matching-buffers
+     server uri
+     (lambda ()
+       (lean4-info-buffer-refresh)
+       (flymake-start)))))
 
 (cl-defmethod eglot-handle-notification :after ((server lean4-eglot-lsp-server)
                                                 (_method (eql textDocument/publishDiagnostics))
