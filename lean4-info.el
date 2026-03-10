@@ -67,6 +67,8 @@ Also choose settings used for the *Lean Goal* buffer."
       (eldoc-mode)
       (set-input-method "Lean")
       (set-syntax-table lean4-syntax-table)
+      (setq-local font-lock-defaults lean4-info-font-lock-defaults)
+      (font-lock-mode 1)
       (setq buffer-read-only t))))
 
 (defun lean4-toggle-info-buffer (buffer)
@@ -200,7 +202,8 @@ The buffer is supposed to be the *Lean Goal* buffer."
                    (propertize (concat (match-string-no-properties 1)
                                        (match-string-no-properties 2))
                                'font-lock-face 'font-lock-comment-face)
-                   'fixedcase 'literal))))))))))
+                   'fixedcase 'literal))))
+            (font-lock-ensure)))))))
 
 (defcustom lean4-info-plain t
   "If t, then use plain text for info buffer.
