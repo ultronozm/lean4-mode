@@ -63,7 +63,7 @@ Some useful variables:
 
 * `lean4-indent-offset`: indentation step (default: 2)
 * `lean4-idle-delay`: refresh delay for goals/messages at point (default: 0.3)
-* `lean4-info-plain`: plain goals (t) vs widget-based hover docs (nil; experimental)
+* `lean4-info-plain`: plain goals (t) vs widget-based hover docs and goal-buffer xref (nil; experimental)
 * `lean4-show-file-progress`: highlight server processing progress (default: t)
 
 Key Bindings and Commands
@@ -82,6 +82,8 @@ This yields the setup:
 | <kbd>C-c C-k</kbd> | show keystroke for symbol            |
 | <kbd>C-c C-d</kbd> | restart Lean server for current file |
 | <kbd>C-c C-i</kbd> | toggle goal/messages buffer          |
+
+When `lean4-info-plain` is nil, `M-.` in the `*Lean Goal*` buffer jumps to the definition of the interactive term at point, and mouse-1/mouse-2 do the same.
 
 Diagnostics are provided via Flymake (through Eglot). For diagnostics navigation,
 bind <kbd>M-n</kbd> / <kbd>M-p</kbd> directly in `flymake-mode-map`:
