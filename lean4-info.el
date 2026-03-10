@@ -31,15 +31,24 @@
 ;;; Code:
 
 (require 'cl-lib)
+(require 'subr-x)
 (require 'lean4-syntax)
 (require 'lean4-settings)
 (require 'lean4-util)
 (require 'eglot)
 (require 'magit-section)
+(require 'xref)
 
 (defgroup lean4-info nil
   "Lean Info."
   :group 'lean4)
+
+(defvar lean4-info-widget-map
+  (let ((map (make-sparse-keymap)))
+    (define-key map [mouse-1] #'lean4-info-find-definition-mouse)
+    (define-key map [mouse-2] #'lean4-info-find-definition-mouse)
+    map)
+  "Keymap for interactive terms in the *Lean Goal* buffer.")
 
 ;; Lean Info Mode (for "*lean4-info*" buffer)
 ;; Automode List
@@ -52,6 +61,7 @@ This mode is only used in temporary buffers, for fontification."
   (set (make-local-variable 'font-lock-defaults) lean4-info-font-lock-defaults))
 
 (declare-function lean4--idle-invalidate "lean4-mode")
+(declare-function eglot--xref-make-match "eglot" (name uri range))
 
 (defun lean4-ensure-info-buffer (buffer)
   "Create BUFFER if it does not exist.
@@ -69,6 +79,7 @@ Also choose settings used for the *Lean Goal* buffer."
       (set-syntax-table lean4-syntax-table)
       (setq-local font-lock-defaults lean4-info-font-lock-defaults)
       (font-lock-mode 1)
+      (local-set-key [remap xref-find-definitions] #'lean4-info-find-definition)
       (setq buffer-read-only t))))
 
 (defun lean4-toggle-info-buffer (buffer)
@@ -128,6 +139,118 @@ The buffer is supposed to be the *Lean Goal* buffer."
     (insert s)
     (font-lock-ensure)
     (buffer-string)))
+
+(defun lean4-info--decorate-widgets ()
+  "Add navigation affordances to interactive goal terms."
+  (let ((pos (point-min)))
+    (while (< pos (point-max))
+      (let ((next (next-single-property-change pos 'lean4-p nil (point-max))))
+        (when (get-text-property pos 'lean4-p)
+          (let ((map (make-composed-keymap
+                      lean4-info-widget-map
+                      (get-text-property pos 'keymap))))
+            (add-text-properties
+             pos next
+             `(follow-link t
+               help-echo "mouse-1, mouse-2 or M-.: go to definition"
+               keymap ,map
+               mouse-face highlight))))
+        (setq pos next)))))
+
+(defun lean4-info--rpc-ref-at-point (&optional pos)
+  "Return the Lean RPC ref at POS, or nil if there is none.
+POS defaults to point."
+  (car (get-text-property (or pos (point)) 'lean4-p)))
+
+(defun lean4-info--require-rpc-ref (&optional pos)
+  "Return the Lean RPC ref at POS or signal a user-facing error."
+  (or (lean4-info--rpc-ref-at-point pos)
+      (if lean4-info-plain
+          (user-error
+           "Interactive goal terms are unavailable while `lean4-info-plain' is non-nil")
+        (user-error "No Lean term at point"))))
+
+(defun lean4-info--widget-summary (&optional pos)
+  "Return a compact summary of the interactive term at POS."
+  (if-let* ((region (lean4-info--widget-region pos))
+            (text (buffer-substring-no-properties (car region) (cdr region))))
+      (replace-regexp-in-string "[[:space:]\n]+" " " (string-trim text))
+    "Lean definition"))
+
+(defun lean4-info--ensure-rpc-session ()
+  "Ensure that the info buffer has an RPC session available."
+  (unless (and lean4--rpc-server
+               lean4--rpc-sessionId
+               lean4--rpc-textDocument
+               lean4--rpc-position)
+    (user-error "No Lean RPC session is available for the goal buffer")))
+
+(defun lean4-info--goto-request-params (ref kind)
+  "Build RPC params for go-to KIND using RPC REF."
+  `(:method "Lean.Widget.getGoToLocation"
+            :sessionId ,lean4--rpc-sessionId
+            :textDocument ,lean4--rpc-textDocument
+            :position ,lean4--rpc-position
+            :params (:kind ,kind
+                     :info (:p ,ref))))
+
+(defun lean4-info--location-uri (location)
+  "Extract the target URI from LOCATION."
+  (or (cl-getf location :targetUri)
+      (cl-getf location :uri)))
+
+(defun lean4-info--location-range (location)
+  "Extract the best available target range from LOCATION."
+  (or (cl-getf location :targetSelectionRange)
+      (cl-getf location :targetRange)
+      (cl-getf location :range)))
+
+(defun lean4-info--xref-for-location (summary location)
+  "Convert a Lean LOCATION to an xref using SUMMARY."
+  (when-let* ((uri (lean4-info--location-uri location))
+              (range (lean4-info--location-range location)))
+    (cl-letf (((symbol-function 'eglot--current-server-or-lose)
+               (lambda () lean4--rpc-server)))
+      (eglot--xref-make-match summary uri range))))
+
+(defun lean4-info-find-definition ()
+  "Jump to the definition of the interactive goal term at point."
+  (interactive)
+  (let* ((origin-buffer (current-buffer))
+         (origin-window (selected-window))
+         (origin-point (point))
+         (ref (lean4-info--require-rpc-ref origin-point))
+         (summary (lean4-info--widget-summary origin-point)))
+    (lean4-info--ensure-rpc-session)
+    (jsonrpc-async-request
+     lean4--rpc-server :$/lean/rpc/call
+     (lean4-info--goto-request-params ref "definition")
+     :success-fn
+     (lambda (result)
+       (when (buffer-live-p origin-buffer)
+         (let ((xrefs (delq nil
+                            (mapcar (lambda (location)
+                                      (lean4-info--xref-for-location summary location))
+                                    (append result nil)))))
+           (if xrefs
+               (if (window-live-p origin-window)
+                   (with-selected-window origin-window
+                     (with-current-buffer origin-buffer
+                       (goto-char (min origin-point (point-max)))
+                       (xref--show-defs xrefs nil)))
+                 (with-current-buffer origin-buffer
+                   (goto-char (min origin-point (point-max)))
+                   (xref--show-defs xrefs nil)))
+             (message "No Lean definition found for %s" summary)))))
+     :error-fn
+     (lambda (&rest _)
+       (message "Lean go-to-definition request failed")))))
+
+(defun lean4-info-find-definition-mouse (event)
+  "Visit the Lean definition for the interactive goal term clicked at EVENT."
+  (interactive "e")
+  (mouse-set-point event)
+  (lean4-info-find-definition))
 
 (defun lean4-mk-message-section (value caption errors)
   "Add a section with caption CAPTION and contents ERRORS."
@@ -203,12 +326,14 @@ The buffer is supposed to be the *Lean Goal* buffer."
                                        (match-string-no-properties 2))
                                'font-lock-face 'font-lock-comment-face)
                    'fixedcase 'literal))))
+            (lean4-info--decorate-widgets)
             (font-lock-ensure)))))))
 
 (defcustom lean4-info-plain t
   "If t, then use plain text for info buffer.
-If nil, then enable \"hover docs\" in the info buffer.  This is
-an experimental feature that requires further testing."
+If nil, then enable widget-based goal terms with hover docs and
+goal-buffer go-to-definition.  This is an experimental feature
+that requires further testing."
   :type
   '(choice
     (const :tag "Plain text" t)
