@@ -91,19 +91,34 @@ The buffer is supposed to be the *Lean Goal* buffer."
       (lean4-ensure-info-buffer buffer)
       (display-buffer buffer))))
 
-(defcustom lean4-info-refresh-even-if-invisible nil
-  "If non-nil, refresh the info buffer even if it is not visible."
-  :type 'boolean)
+(defvar lean4-info-refresh-predicates nil
+  "Hook of predicates that request info refresh in the current Lean buffer.
+Each function is called with no arguments in the source buffer.  If any
+function returns non-nil, `lean4-info-buffer-refresh' will refresh cached goal
+state even when the `*Lean Goal*' buffer is not visible.")
+
+(defvar lean4-info-state-change-hook nil
+  "Normal hook run after cached Lean info state changes in the source buffer.")
+
+(defun lean4-info-buffer-visible-p (buffer)
+  "Return non-nil when info BUFFER is visible on some frame."
+  (and (get-buffer buffer)
+       (get-buffer-window buffer t)))
 
 (defun lean4-info-buffer-active (buffer)
-  "Check whether the given info BUFFER should show info for the current buffer."
+  "Check whether info BUFFER should be redisplayed for the current buffer."
   (and
-   (if lean4-info-refresh-even-if-invisible
-       ;; info buffer exists
-       (get-buffer buffer)
-     ;; info buffer visible (on any frame)
-     (get-buffer-window buffer t))
-   (get-buffer buffer)
+   (lean4-info-buffer-visible-p buffer)
+   ;; current window of current buffer is selected (i.e., in focus)
+   (eq (current-buffer) (window-buffer))
+   ;; current buffer is visiting a file
+   buffer-file-name))
+
+(defun lean4-info-buffer-refresh-needed-p (buffer)
+  "Check whether cached info for BUFFER should be refreshed."
+  (and
+   (or (lean4-info-buffer-visible-p buffer)
+       (run-hook-with-args-until-success 'lean4-info-refresh-predicates))
    ;; current window of current buffer is selected (i.e., in focus)
    (eq (current-buffer) (window-buffer))
    ;; current buffer is visiting a file
@@ -116,6 +131,14 @@ The buffer is supposed to be the *Lean Goal* buffer."
 
 (defvar-local lean4-info--refresh-generation 0
   "Monotonic counter for asynchronous info-buffer refresh requests.")
+
+(defun lean4-info-current-goals ()
+  "Return the currently cached goals for the active Lean source buffer."
+  lean4-info--goals)
+
+(defun lean4-info-current-term-goal ()
+  "Return the currently cached expected type for the active Lean source buffer."
+  lean4-info--term-goal)
 
 (defun lean4-info--diagnostics ()
   (nreverse
@@ -442,7 +465,7 @@ PS is a list of tag IDs."
   "Refresh the *Lean Goal* buffer."
   ;; Important for TRAMP responsiveness: avoid calling `eglot-current-server'
   ;; unless the info buffer is actually active.
-  (when-let* (((lean4-info-buffer-active lean4-info-buffer-name))
+  (when-let* (((lean4-info-buffer-refresh-needed-p lean4-info-buffer-name))
               (server (eglot-current-server)))
     (let* ((buf (current-buffer))
            (generation (cl-incf lean4-info--refresh-generation))
@@ -459,7 +482,9 @@ PS is a list of tag IDs."
                   (when (eql generation lean4-info--refresh-generation)
                     (setq lean4-info--goals goals)
                     (setq lean4-info--term-goal term-goal)
-                    (lean4-info-buffer-redisplay))))))
+                    (run-hooks 'lean4-info-state-change-hook)
+                    (when (lean4-info-buffer-visible-p lean4-info-buffer-name)
+                      (lean4-info-buffer-redisplay)))))))
            (store-goals
             (lambda (value)
               (setq goals value)
